@@ -1,6 +1,6 @@
 {
-  "name": "Diced",
-  "short_name": "Diced",
+  "name": "diced",
+  "short_name": "diced",
   "description": "Personal cut tracker: calories, macros, and what a craving actually costs.",
   "start_url": "./index.html",
   "scope": "./",

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Diced</title>
+<title>diced</title>
 <meta name="description" content="Personal cut tracker: calories, macros, and what a craving actually costs.">
 <link rel="manifest" href="./manifest.json">
 <meta name="theme-color" content="#10140f">
@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" href="./icons/icon-apple-touch.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Diced">
+<meta name="apple-mobile-web-app-title" content="diced">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -236,7 +236,7 @@ a{color:var(--accent);}
 
 <script>
 /* =========================================================================
-   DICED — personal cut tracker (standalone PWA build)
+   diced — personal cut tracker (standalone PWA build)
    Storage: IndexedDB, entirely on this device. No account, no network
    dependency once installed. See buildBackupPayload/exportBackup/importBackup
    for the portable-JSON safety net.
@@ -741,7 +741,7 @@ function buildBackupPayload(){
   Object.values(state.logsByDate).forEach(arr=>arr.forEach(l=>allLogs.push(l)));
   const allDays = Object.keys(state.days).map(date=>({date, ...state.days[date]}));
   return {
-    app:'Diced', exportedAt:new Date().toISOString(), formatVersion:1,
+    app:'diced', exportedAt:new Date().toISOString(), formatVersion:1,
     settings: state.settings,
     foods: state.foods,
     logs: allLogs.sort((a,b)=>(a.date+((a.time)||'')).localeCompare(b.date+((b.time)||''))),
@@ -785,7 +785,7 @@ async function handleImportFile(file){
     return;
   }
   if(!payload || typeof payload!=='object' || !payload.settings || !Array.isArray(payload.foods)){
-    toast("That doesn't look like a Diced backup file");
+    toast("That doesn't look like a diced backup file");
     return;
   }
   const logCount = Array.isArray(payload.logs) ? payload.logs.length : 0;

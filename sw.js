@@ -1,4 +1,4 @@
-// Diced service worker — app-shell caching so it opens offline.
+// diced service worker — app-shell caching so it opens offline.
 // All real data lives in IndexedDB (handled in index.html), never in here.
 const CACHE = 'diced-v1';
 const SHELL = [
