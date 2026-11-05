@@ -79,9 +79,13 @@ input,select,textarea{font-family:inherit; color:var(--fg); background:var(--sur
   border-bottom:1px solid var(--border); padding:14px 0 12px; margin:0 0 14px;
 }
 .topbar-row{display:flex; align-items:baseline; justify-content:space-between; gap:10px;}
-.topbar-date{font-size:13px; color:var(--fg-dim); font-weight:700; letter-spacing:.02em; text-transform:uppercase;}
+.topbar-date{font-size:13px; color:var(--fg-dim); font-weight:700; letter-spacing:.02em; text-transform:uppercase; white-space:nowrap;}
 .topbar-mode{font-size:11px; color:var(--fg-faint); font-family:var(--font-mono);}
 .theme-btn{background:none;border:none;color:var(--fg-dim);font-size:16px;padding:4px 6px;border-radius:8px;}
+.daynav-btn{background:none; border:none; color:var(--fg-dim); font-size:19px; line-height:1; padding:4px 7px; border-radius:8px;}
+.daynav-btn:disabled{opacity:.3;}
+.daynav-btn:active:not(:disabled){background:var(--surface-2);}
+.today-jump{font-size:11px; padding:4px 9px; margin-left:2px;}
 
 /* ---- scroll body ---- */
 .view{flex:1; padding-bottom:96px;}
@@ -197,9 +201,7 @@ a{color:var(--accent);}
 <div class="app">
   <div class="topbar">
     <div class="topbar-row">
-      <div>
-        <div class="topbar-date" id="hdrDate">—</div>
-      </div>
+      <div class="row" id="hdrDateWrap" style="gap:2px;"></div>
       <div class="row" style="gap:8px;">
         <span class="topbar-mode" id="hdrMode"></span>
         <button class="theme-btn" id="themeBtn" title="Toggle theme">◐</button>
@@ -337,6 +339,7 @@ const state = {
   skips: [],
   activeTab:'today',
   todayDate: todayStr(),
+  viewDate: todayStr(), // the date the Today tab is showing/editing — not always todayDate
 };
 
 /* ---------------- toast ---------------- */
@@ -685,7 +688,7 @@ function saveDay(dateStr, patch){
 }
 function addLog(entry){
   const id = 'l'+Date.now()+Math.random().toString(36).slice(2,7);
-  const full = {id, date: state.todayDate, time: new Date().toISOString(), ...entry};
+  const full = {id, date: state.viewDate, time: new Date().toISOString(), ...entry};
   if(!state.logsByDate[full.date]) state.logsByDate[full.date]=[];
   state.logsByDate[full.date].push(full);
   idbPut('logs', full).catch(e=>console.error(e));
@@ -832,7 +835,8 @@ function dangerWindowInfo(dateStr){
 }
 
 function renderToday(){
-  const d = state.todayDate;
+  const d = state.viewDate;
+  const isToday = d === state.todayDate;
   const s = state.settings;
   const totals = totalsFor(d);
   const target = dayTargetFor(d);
@@ -844,7 +848,9 @@ function renderToday(){
   const cheatToday = isLunchCheatDay(d, s);
   const thuToday = isThursday(d);
 
-  const dw = dangerWindowInfo(d);
+  // the gap-window nudge is about where you are RIGHT NOW relative to class —
+  // meaningless when browsing a past or future day
+  const dw = isToday ? dangerWindowInfo(d) : null;
   let bannerHtml = '';
   if(dw && dw.active){
     bannerHtml = `
@@ -860,7 +866,7 @@ function renderToday(){
   }
 
   let backupNudgeHtml = '';
-  if(!backupNudgeDismissed && daysSinceLastExport()>=7){
+  if(isToday && !backupNudgeDismissed && daysSinceLastExport()>=7){
     backupNudgeHtml = `
       <div class="banner" style="background:var(--surface-2); border-color:var(--border);">
         <div class="btitle" style="color:var(--fg);">💾 Back up your data</div>
@@ -938,7 +944,7 @@ function renderToday(){
     <div class="card">
       <div class="row between">
         <div>
-          <div class="label">Steps today</div>
+          <div class="label">Steps</div>
           <div class="sub">Goal ${stepGoal.toLocaleString()} · from Samsung Health</div>
         </div>
         <input type="number" inputmode="numeric" id="stepsInput" placeholder="0" value="${stepsVal??''}" style="width:90px; text-align:right;">
@@ -951,7 +957,7 @@ function renderToday(){
       <button class="btn btn-block" data-action="openweigh">⚖ Weigh-in</button>
     </div>
 
-    ${mealGroups || '<div class="empty">Nothing logged yet today. Tap "Add food" to start.</div>'}
+    ${mealGroups || `<div class="empty">Nothing logged ${isToday?'yet today':'for this day'}. Tap "Add food" to ${isToday?'start':'add it in'}.</div>`}
   `;
 
   document.getElementById('stepsInput')?.addEventListener('change', e=>{
@@ -971,6 +977,9 @@ function wireTodayActions(){
     const action = el.dataset.action;
     if(action==='opencadd') openAddFoodSheet();
     if(action==='openweigh') openWeighSheet();
+    if(action==='prevday'){ state.viewDate = addDays(state.viewDate, -1); renderAll(); }
+    if(action==='nextday'){ if(state.viewDate!==state.todayDate){ state.viewDate = addDays(state.viewDate, 1); renderAll(); } }
+    if(action==='jumptoday'){ state.viewDate = state.todayDate; renderAll(); }
     if(action==='quickwalk'){ toast('Good call. No calories, no regrets.'); addSkip({name:'Took a walk instead of a gap snack', kcalSaved:0, proteinSaved:0, type:'walk'}); }
     if(action==='quickshake'){ const f=state.foods.find(x=>/whey/i.test(x.name)); if(f){ logFood(f, null, 'snack'); toast('Shake logged'); } }
     if(action==='gotoshouldi'){ document.querySelector('[data-tab=shouldi]').click(); }
@@ -1091,7 +1100,7 @@ window.openFoodEditSheet = function(food){
 
 /* ---- weigh-in sheet ---- */
 function openWeighSheet(){
-  const d = state.todayDate;
+  const d = state.viewDate;
   const cur = state.days[d]||{};
   openSheet(`
     <div class="sheet-head"><h3>Weigh-in · ${fmtDateShort(d)}</h3><button class="btn btn-ghost" data-action="closesheet">Done</button></div>
@@ -1522,7 +1531,13 @@ function loggingStreakText(){
    ========================================================================= */
 function renderAll(){
   if(!state.ready) return;
-  document.getElementById('hdrDate').textContent = fmtDateLong(state.todayDate);
+  const viewingToday = state.viewDate === state.todayDate;
+  document.getElementById('hdrDateWrap').innerHTML = `
+    <button class="daynav-btn" data-action="prevday" aria-label="Previous day">‹</button>
+    <div class="topbar-date">${fmtDateLong(state.viewDate)}</div>
+    <button class="daynav-btn" data-action="nextday" ${viewingToday?'disabled':''} aria-label="Next day">›</button>
+    ${!viewingToday?'<button class="btn btn-ghost today-jump" data-action="jumptoday">Today</button>':''}
+  `;
   document.getElementById('hdrMode').textContent = state.settings.mode==='adaptive' ? 'adaptive' : 'simple';
   if(state.activeTab==='today') renderToday();
   if(state.activeTab==='library') renderLibrary();
@@ -1538,7 +1553,15 @@ initTheme();
 initTabs();
 wireTodayActions();
 initApp();
-setInterval(()=>{ const t=todayStr(); if(t!==state.todayDate){ state.todayDate=t; renderAll(); } }, 60000);
+setInterval(()=>{
+  const t = todayStr();
+  if(t !== state.todayDate){
+    const wasViewingToday = state.viewDate === state.todayDate;
+    state.todayDate = t;
+    if(wasViewingToday) state.viewDate = t; // follow along if they were on "today"; leave it if they're browsing history
+    renderAll();
+  }
+}, 60000);
 
 if('serviceWorker' in navigator){
   window.addEventListener('load', ()=>{
