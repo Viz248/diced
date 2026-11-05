@@ -298,8 +298,8 @@ function defaultFoods(){
     f('Chicken shawarma — Hart Lounge','Cheat',550,27,45,28,'1 piece', {isCheat:true}),
     f('Chicken burger — café','Cheat',500,22,40,26,'1 piece', {isCheat:true}),
     f('Tandoori chicken','Lunch/Dinner',380,45,4,20,'good portion, Friday lunch'),
-    f('Bhatura','Cheat',280,6,35,13,'1 piece', {isCheat:true}),
-    f('Chole','Cheat',230,9,30,8,'1 bowl', {isCheat:true}),
+    f('Poori','Cheat',100,2,12,5,'1 piece', {isCheat:true}),
+    f('Chenna — scooped, no gravy','Cheat',180,8,16,8,'Thursday, chickpeas only', {isCheat:true}),
   ].map((x,i)=>({id:'seed_'+i, usageCount:0, ...x}));
 }
 
@@ -497,7 +497,10 @@ function computeWeeklyPlan(){
   const tueExtra = p.tuesdayShawarmaCount>=2 ? 600 : 100;
   const satExtra = p.saturdayShawarmaCount>=2 ? 600 : 100;
   const sunExtra = 300;
-  const thuExtra = p.thursdayCap ? 400 : 1000;
+  // poori (~100 kcal each) is much lighter than the bhatura this was originally priced on;
+  // capped = 2 poori + 1 chenna bowl, free = a rough 3.5 poori + 2 chenna guess — both rough,
+  // correct once real Thursday logs come in
+  const thuExtra = p.thursdayCap ? 100 : 400;
   const cornflakesWeekly = p.cornflakesOn ? 750 : 0;
   const stepBonusDaily = Math.max(0, (p.stepGoal - STEP_BASELINE)/1000*KCAL_PER_1000_STEPS);
 
@@ -923,7 +926,7 @@ function renderToday(){
       <div class="bar-track"><div class="bar-fill ${barClass}" style="width:${pct}%"></div></div>
       <div class="row between" style="margin-top:14px;">
         ${cheatToday ? '<span class="pill pill-cheat">Cheat day</span>' : '<span class="pill pill-muted">Normal day</span>'}
-        ${thuToday ? '<span class="pill pill-cheat">Chole bhature</span>' : ''}
+        ${thuToday ? '<span class="pill pill-cheat">Chenna poori</span>' : ''}
       </div>
     </div>
 
@@ -1330,7 +1333,7 @@ function renderPlan(){
       </div>
       <div class="hr"></div>
       <div class="row between">
-        <div><div style="font-weight:700;">Cap Thursday</div><div class="sub">2 bhature + 1 chole, instead of until full (saves ~600/week)</div></div>
+        <div><div style="font-weight:700;">Cap Thursday</div><div class="sub">2 poori + 1 chenna bowl, instead of until full (saves ~300/week)</div></div>
         <label class="switch"><input type="checkbox" id="planThursday" ${p.thursdayCap?'checked':''}><span class="track"></span><span class="knob"></span></label>
       </div>
       <div class="hr"></div>
