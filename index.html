@@ -276,6 +276,7 @@ function defaultSettings(){
     },
     cheatSundayAnchor: mostRecentSunday(todayStr()), // this anchor Sunday IS a cheat sunday; alternates from there
     lastExportAt: null,
+    aiEstimate: { workerUrl: null, appSecret: null }, // your own Cloudflare Worker — see Plan tab
   };
 }
 
@@ -645,7 +646,9 @@ async function initApp(){
     ]);
 
     if(settingsRaw){
-      state.settings = {...defaultSettings(), ...settingsRaw, plan:{...defaultSettings().plan, ...(settingsRaw.plan||{})}};
+      state.settings = {...defaultSettings(), ...settingsRaw,
+        plan:{...defaultSettings().plan, ...(settingsRaw.plan||{})},
+        aiEstimate:{...defaultSettings().aiEstimate, ...(settingsRaw.aiEstimate||{})}};
     } else {
       state.settings = defaultSettings();
       await idbPut('settings', state.settings, 'main');
@@ -803,7 +806,9 @@ async function handleImportFile(file){
   try{
     await Promise.all(['settings','foods','logs','days','skips'].map(s=>idbClear(s)));
 
-    const newSettings = {...defaultSettings(), ...payload.settings, plan:{...defaultSettings().plan, ...(payload.settings.plan||{})}};
+    const newSettings = {...defaultSettings(), ...payload.settings,
+      plan:{...defaultSettings().plan, ...(payload.settings.plan||{})},
+      aiEstimate:{...defaultSettings().aiEstimate, ...(payload.settings.aiEstimate||{})}};
     await idbPut('settings', newSettings, 'main');
 
     await Promise.all((payload.foods||[]).map(f=>idbPut('foods', f)));
@@ -993,6 +998,13 @@ function wireTodayActions(){
     if(action==='editfood'){ const f=state.foods.find(x=>x.id===el.dataset.id); if(f) openFoodEditSheetImpl(f); }
     if(action==='newfood'){ openFoodEditSheetImpl(null); }
     if(action==='newfoodfromsheet'){ openFoodEditSheetImpl(null); }
+    if(action==='openaiestimate'){ openAiEstimateSheet(); }
+    if(action==='aiestimatesubmit'){ aiEstimateSubmit(); }
+    if(action==='aiestimateanswer'){ aiEstimateAnswer(); }
+    if(action==='aiestimateskip'){ aiEstimateAnswer(true); }
+    if(action==='aiestimatelog'){ aiEstimateLog(false); }
+    if(action==='aiestimatesave'){ aiEstimateLog(true); }
+    if(action==='gotoplanaisetup'){ closeSheet(); document.querySelector('[data-tab=plan]').click(); }
     if(action==='exportbackup'){ exportBackup(); }
     if(action==='dismissbackup'){ backupNudgeDismissed=true; renderAll(); }
     if(action==='importbackup'){ triggerImport(); }
@@ -1039,7 +1051,10 @@ function renderFoodPicker(list, q){
     <div class="sheet-head"><h3>Add food</h3><button class="btn btn-ghost" data-action="closesheet">Done</button></div>
     <input type="text" id="foodSearchInput" placeholder="Search your foods…" value="${esc(q)}" style="margin-bottom:12px;">
     <div id="foodPickerList" class="card" style="padding:4px 10px; max-height:52vh; overflow-y:auto;">${foodListHtml(list)}</div>
-    <button class="btn btn-block" style="margin-top:12px;" data-action="newfoodfromsheet">+ New food not in list</button>
+    <div class="row" style="margin-top:12px; gap:8px;">
+      <button class="btn" style="flex:1;" data-action="newfoodfromsheet">+ New food not in list</button>
+      <button class="btn btn-primary" style="flex:1;" data-action="openaiestimate">✨ Don't know the calories?</button>
+    </div>
   `;
 }
 function foodListHtml(list){
@@ -1054,6 +1069,183 @@ function foodListHtml(list){
     </div>
   `).join('');
 }
+/* =========================================================================
+   AI ESTIMATE — "don't know the calories" flow.
+   Calls your own Cloudflare Worker (set up in Plan tab), never any key
+   directly. See worker.js in the diced-worker repo for the server side.
+   ========================================================================= */
+let aiEst = { description:'', answers:[], result:null };
+
+function aiEstimateConfigured(){
+  const c = state.settings.aiEstimate;
+  return !!(c && c.workerUrl && c.appSecret);
+}
+
+function openAiEstimateSheet(){
+  if(!aiEstimateConfigured()){
+    openSheet(`
+      <div class="sheet-head"><h3>AI estimate</h3><button class="btn btn-ghost" data-action="closesheet">✕</button></div>
+      <p class="sub" style="margin-bottom:14px;">This needs a one-time setup — your own free Cloudflare Worker holding your own API key, so no one else's usage runs up your bill. Takes a few minutes, done once.</p>
+      <button class="btn btn-primary btn-block" data-action="gotoplanaisetup">Set it up in Plan</button>
+    `);
+    return;
+  }
+  aiEst = { description:'', answers:[], result:null };
+  openSheet(renderAiEstimateInput());
+  document.getElementById('aiDescInput')?.focus();
+}
+
+function renderAiEstimateInput(){
+  return `
+    <div class="sheet-head"><h3>✨ What did you eat?</h3><button class="btn btn-ghost" data-action="closesheet">✕</button></div>
+    <div class="field" style="margin-bottom:14px;">
+      <input type="text" id="aiDescInput" placeholder="e.g. 1 orange, a bowl of rice, 2 slices of toast with butter" value="${esc(aiEst.description)}">
+    </div>
+    <button class="btn btn-primary btn-block" data-action="aiestimatesubmit">Estimate</button>
+    <p class="sub" style="margin-top:10px;">It'll ask a quick follow-up if the portion really changes the number — otherwise it just gives you its best guess.</p>
+  `;
+}
+
+function renderAiLoading(label){
+  openSheet(`
+    <div class="sheet-head"><h3>✨ Estimating…</h3></div>
+    <p class="sub">${esc(label||'One sec.')}</p>
+  `);
+}
+
+function renderAiError(message){
+  openSheet(`
+    <div class="sheet-head"><h3>Couldn't get an estimate</h3><button class="btn btn-ghost" data-action="closesheet">✕</button></div>
+    <p class="sub" style="margin-bottom:14px;">${esc(message)}</p>
+    <div class="stack">
+      <button class="btn btn-primary btn-block" data-action="aiestimatesubmit">Try again</button>
+      <button class="btn btn-block" onclick="closeSheet(); openFoodEditSheetImpl({name: aiEst.description||'', category:'Snack', kcal:'', protein:'', carbs:'', fat:'', servingLabel:'', isCheat:false});">Enter it manually instead</button>
+    </div>
+  `);
+}
+
+async function callAiEstimateApi(){
+  const cfg = state.settings.aiEstimate;
+  const res = await fetch(cfg.workerUrl, {
+    method:'POST',
+    headers:{'Content-Type':'application/json', 'X-App-Secret': cfg.appSecret},
+    body: JSON.stringify({ description: aiEst.description, answers: aiEst.answers }),
+  });
+  let data;
+  try{ data = await res.json(); }catch(e){ data = null; }
+  if(!res.ok || !data || data.error){
+    const code = data && data.error;
+    if(res.status===401) throw new Error("The app secret doesn't match what's set on your Worker — check Plan → AI estimate setup.");
+    if(res.status===403) throw new Error("Your Worker isn't allowing requests from this app's address — check the CORS origin in worker.js.");
+    if(res.status===429) throw new Error('Rate limited right now — give it a moment and try again.');
+    if(code==='server_not_configured') throw new Error("Your Worker is missing its API key — check its Settings → Variables.");
+    throw new Error("Something went wrong getting an estimate. Try again, or enter it manually.");
+  }
+  return data;
+}
+
+async function aiEstimateSubmit(){
+  const input = document.getElementById('aiDescInput');
+  if(input) aiEst.description = input.value.trim();
+  if(!aiEst.description){ toast('Type what you ate first'); return; }
+  aiEst.answers = [];
+  renderAiLoading('Figuring out ' + aiEst.description + '…');
+  try{
+    const data = await callAiEstimateApi();
+    handleAiEstimateResponse(data);
+  }catch(e){
+    renderAiError(e.message);
+  }
+}
+
+async function aiEstimateAnswer(skip){
+  const input = document.getElementById('aiAnswerInput');
+  const answerText = skip ? 'no preference, use your best guess' : (input?.value.trim() || 'no preference, use your best guess');
+  aiEst.answers.push({ question: aiEst.pendingQuestion, answer: answerText });
+  renderAiLoading('Got it, one sec…');
+  try{
+    const data = await callAiEstimateApi();
+    handleAiEstimateResponse(data);
+  }catch(e){
+    renderAiError(e.message);
+  }
+}
+
+function handleAiEstimateResponse(data){
+  if(data.status==='question'){
+    aiEst.pendingQuestion = data.question;
+    openSheet(`
+      <div class="sheet-head"><h3>✨ Quick question</h3><button class="btn btn-ghost" data-action="closesheet">✕</button></div>
+      <p style="margin-bottom:14px; font-weight:700;">${esc(data.question)}</p>
+      <input type="text" id="aiAnswerInput" placeholder="Your answer" style="margin-bottom:12px;">
+      <div class="row" style="gap:8px;">
+        <button class="btn btn-primary" style="flex:1;" data-action="aiestimateanswer">Answer</button>
+        <button class="btn btn-ghost" style="flex:1;" data-action="aiestimateskip">Just estimate</button>
+      </div>
+    `);
+    document.getElementById('aiAnswerInput')?.focus();
+    return;
+  }
+  if(data.status==='estimate'){
+    aiEst.result = data;
+    openSheet(`
+      <div class="sheet-head"><h3>✨ Estimate</h3><button class="btn btn-ghost" data-action="closesheet">✕</button></div>
+      <p class="sub" style="margin-bottom:14px;">Double-check this if it looks off — you can edit any field before logging.</p>
+      <div class="stack">
+        <div class="field"><span class="label">Name</span><input type="text" id="aiName" value="${esc(data.name)}"></div>
+        <div class="field"><span class="label">Serving</span><input type="text" id="aiServing" value="${esc(data.servingLabel||'')}"></div>
+        <div class="grid2">
+          <div class="field"><span class="label">Calories</span><input type="number" id="aiKcal" value="${data.kcal}"></div>
+          <div class="field"><span class="label">Protein (g)</span><input type="number" id="aiProtein" value="${data.protein}"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><span class="label">Carbs (g)</span><input type="number" id="aiCarbs" value="${data.carbs}"></div>
+          <div class="field"><span class="label">Fat (g)</span><input type="number" id="aiFat" value="${data.fat}"></div>
+        </div>
+        <div class="field">
+          <span class="label">Log as</span>
+          <div class="segmented" id="aiMealPick">
+            ${MEALS.map(m=>`<button data-meal="${m.k}" class="${m.k===guessMeal()?'active':''}">${m.label}</button>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:14px; gap:8px;">
+        <button class="btn btn-primary" style="flex:1;" data-action="aiestimatelog">Log it once</button>
+        <button class="btn" style="flex:1;" data-action="aiestimatesave">Save & log</button>
+      </div>
+    `);
+    document.querySelectorAll('#aiMealPick button').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        document.querySelectorAll('#aiMealPick button').forEach(x=>x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
+    return;
+  }
+  renderAiError('Got an unexpected response. Try again, or enter it manually.');
+}
+
+function aiEstimateLog(saveToLibrary){
+  const activeMealBtn = document.querySelector('#aiMealPick button.active');
+  const meal = activeMealBtn ? activeMealBtn.dataset.meal : guessMeal();
+  const entry = {
+    name: document.getElementById('aiName').value.trim() || aiEst.result.name,
+    servingLabel: document.getElementById('aiServing').value.trim(),
+    kcal: Number(document.getElementById('aiKcal').value)||0,
+    protein: Number(document.getElementById('aiProtein').value)||0,
+    carbs: Number(document.getElementById('aiCarbs').value)||0,
+    fat: Number(document.getElementById('aiFat').value)||0,
+  };
+  if(saveToLibrary){
+    const food = upsertFood({ name:entry.name, servingLabel:entry.servingLabel, category:'Other', kcal:entry.kcal, protein:entry.protein, carbs:entry.carbs, fat:entry.fat, isCheat:false, favorite:false, usageCount:0 });
+    logFood(food, null, meal);
+  } else {
+    addLog({ type:'food', name:entry.name, kcal:entry.kcal, protein:entry.protein, carbs:entry.carbs, fat:entry.fat, meal });
+  }
+  closeSheet();
+  toast('Logged ' + entry.name);
+}
+
 window.pickFood = function(id){
   const f = state.foods.find(x=>x.id===id);
   if(!f) return;
@@ -1158,7 +1350,7 @@ function renderLibrary(){
 }
 
 function openFoodEditSheetImpl(food){
-  const isNew = !food;
+  const isNew = !food || !food.id;
   food = food || {name:'', category:'Snack', kcal:'', protein:'', carbs:'', fat:'', servingLabel:'', isCheat:false};
   openSheet(`
     <div class="sheet-head"><h3>${isNew?'New food':'Edit food'}</h3><button class="btn btn-ghost" data-action="closesheet">✕</button></div>
@@ -1401,7 +1593,26 @@ function renderPlan(){
         <button class="btn btn-sm" data-action="importbackup">Import</button>
       </div>
     </div>
+
+    <div class="card">
+      <div class="row between">
+        <div class="label">AI estimate</div>
+        <span class="pill ${aiEstimateConfigured()?'pill-accent':'pill-muted'}">${aiEstimateConfigured()?'set up':'not set up'}</span>
+      </div>
+      <p class="sub" style="margin:8px 0 12px;">Lets "Don't know the calories?" in Add Food work. Needs your own free Cloudflare Worker holding your own API key — a few minutes, one time. Full steps: <a href="https://github.com/Viz248/diced/tree/main/worker" target="_blank" rel="noopener">worker/README.md</a> in this repo.</p>
+      <div class="field" style="margin-bottom:10px;"><span class="label">Worker URL</span><input type="text" id="aiWorkerUrl" placeholder="https://your-worker.your-name.workers.dev" value="${esc(s.aiEstimate.workerUrl||'')}"></div>
+      <div class="field" style="margin-bottom:10px;"><span class="label">App secret</span><input type="text" id="aiAppSecret" placeholder="the random string you set as APP_SECRET" value="${esc(s.aiEstimate.appSecret||'')}"></div>
+      <button class="btn btn-block" id="saveAiBtn">Save</button>
+    </div>
   `;
+
+  document.getElementById('saveAiBtn').addEventListener('click', ()=>{
+    s.aiEstimate.workerUrl = document.getElementById('aiWorkerUrl').value.trim() || null;
+    s.aiEstimate.appSecret = document.getElementById('aiAppSecret').value.trim() || null;
+    saveSettings();
+    toast('Saved');
+    renderAll();
+  });
 
   document.getElementById('planCornflakes').addEventListener('change', e=>{ s.plan.cornflakesOn=e.target.checked; saveSettings(); renderAll(); });
   document.getElementById('planThursday').addEventListener('change', e=>{ s.plan.thursdayCap=e.target.checked; saveSettings(); renderAll(); });
