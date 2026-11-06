@@ -110,9 +110,13 @@ export default {
             contents: [{ role: 'user', parts: [{ text: userMsg }] }],
             generationConfig: { maxOutputTokens: MAX_TOKENS, responseMimeType: 'application/json' },
           }),
+          signal: AbortSignal.timeout(15000),
         }
       );
     } catch (e) {
+      if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+        return json({ error: 'upstream_timeout' }, 504, origin);
+      }
       return json({ error: 'upstream_unreachable' }, 502, origin);
     }
 

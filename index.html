@@ -1150,6 +1150,7 @@ async function callAiEstimateApi(){
     if(res.status===403) throw new Error("Your Worker isn't allowing requests from this app's address — check the CORS origin in worker.js.");
     if(res.status===429) throw new Error('Rate limited right now — give it a moment and try again.');
     if(code==='server_not_configured') throw new Error("Your Worker is missing its API key — check its Settings → Variables.");
+    if(code==='upstream_timeout') throw new Error("Gemini is responding slowly right now. Try again in a bit.");
     throw new Error("Something went wrong getting an estimate. Try again, or enter it manually.");
   }
   return data;
