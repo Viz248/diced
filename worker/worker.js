@@ -23,7 +23,7 @@
  */
 
 const ALLOWED_ORIGIN = 'https://viz248.github.io';
-const MODEL = 'gemini-flash-latest';
+const MODEL = 'gemini-2.5-flash';
 const MAX_TOKENS = 400;
 
 const SYSTEM_PROMPT = `You estimate calories and macros for a food a user is about to log in a personal diet-tracking app. You are not a doctor and this is not medical advice — you are giving a practical, reasonable estimate for someone tracking their own food.
