@@ -1126,11 +1126,22 @@ function renderAiError(message){
 
 async function callAiEstimateApi(){
   const cfg = state.settings.aiEstimate;
-  const res = await fetch(cfg.workerUrl, {
-    method:'POST',
-    headers:{'Content-Type':'application/json', 'X-App-Secret': cfg.appSecret},
-    body: JSON.stringify({ description: aiEst.description, answers: aiEst.answers }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(()=>controller.abort(), 20000);
+  let res;
+  try{
+    res = await fetch(cfg.workerUrl, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'X-App-Secret': cfg.appSecret},
+      body: JSON.stringify({ description: aiEst.description, answers: aiEst.answers }),
+      signal: controller.signal,
+    });
+  }catch(e){
+    if(e.name==='AbortError') throw new Error("That took too long (over 20s) — your connection or the AI might be slow right now. Try again.");
+    throw new Error("Couldn't reach your Worker — check the Worker URL in Plan → AI estimate setup and your connection.");
+  }finally{
+    clearTimeout(timeoutId);
+  }
   let data;
   try{ data = await res.json(); }catch(e){ data = null; }
   if(!res.ok || !data || data.error){
