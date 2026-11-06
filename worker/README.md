@@ -23,24 +23,32 @@ cap on.
    the free tier.
 3. Copy the key somewhere safe for a moment — you'll paste it in step 3.
 
-## 2. Create the Worker
+## 2. Create the Worker (connected to GitHub)
+
+This repo includes `worker/wrangler.toml`, Cloudflare's config file, so a
+Git-connected Worker auto-redeploys whenever `worker.js` changes here —
+no manual copy-paste each time the AI prompt gets tweaked.
 
 1. Go to [dash.cloudflare.com](https://dash.cloudflare.com), sign up or sign
    in (free, no card required for this tier).
-2. In the sidebar: **Workers & Pages → Create → Create Worker**. Give it any
-   name (e.g. `diced-estimate`), click **Deploy** to create it with the
-   placeholder code — you'll replace that next.
-3. Click **Edit code** (opens an in-browser editor, no local tools needed).
-4. Delete everything in the editor and paste in the contents of
-   [`worker.js`](./worker.js) from this folder.
-5. Click **Deploy**.
-6. Note the Worker's URL shown at the top, something like
-   `https://diced-estimate.yourname.workers.dev` — you'll need the full path
-   `.../` (the worker answers on any path, so the base URL is fine).
+2. In the sidebar: **Workers & Pages → Create**.
+3. Click **Connect GitHub**, authorize Cloudflare's GitHub app, and give it
+   access to the `diced` repo (just that one repo, not all of them).
+4. Select the `diced` repository.
+5. Set **Root directory** to `worker` — this tells Cloudflare to only look
+   inside the `worker/` folder (so your diet data in `index.html` etc. is
+   never touched by this).
+6. Cloudflare should auto-detect `wrangler.toml` and fill in the build
+   settings. Leave the build command empty (there's nothing to build) and
+   deploy.
+7. Note the Worker's URL shown on its page, something like
+   `https://diced-estimate.yourname.workers.dev`.
 
 ## 3. Set your two secrets
 
-Still on that Worker's page: **Settings → Variables and Secrets → Add**.
+Secrets are never stored in the repo or in `wrangler.toml` — set them
+directly on the Worker, once, in the dashboard: that Worker's page →
+**Settings → Variables and Secrets → Add**.
 
 Add two, both as **Secret** (not plain text) so they're encrypted:
 
@@ -49,12 +57,13 @@ Add two, both as **Secret** (not plain text) so they're encrypted:
 | `GEMINI_API_KEY` | the key you copied in step 1 |
 | `APP_SECRET` | any random string you make up — this is a shared password between diced and your Worker so random internet traffic can't use your API key. A password generator's output works fine. |
 
-Save/Deploy after adding both.
+Save/Deploy after adding both. These survive future auto-redeploys from
+GitHub — you only set them this once.
 
 ## 4. Plug it into diced
 
 1. Open diced on your phone → **Plan** tab → **AI estimate** card.
-2. **Worker URL**: paste the Worker's URL from step 2.6.
+2. **Worker URL**: paste the Worker's URL from step 2.7.
 3. **App secret**: paste the exact same string you set as `APP_SECRET` in
    step 3.
 4. **Save**.
@@ -82,6 +91,6 @@ something simple like "an orange" → Estimate.
 
 ## Updating the Worker later
 
-If this repo's `worker.js` ever changes (I'll mention it if so), just repeat
-step 2.3–2.5: open the Worker in the Cloudflare dashboard, replace the code,
-redeploy. Your secrets from step 3 stay as they were.
+Nothing to do — since the Worker is connected to GitHub, any update to
+`worker.js` in this repo redeploys it automatically within a minute or so.
+Your secrets from step 3 stay as they were.
