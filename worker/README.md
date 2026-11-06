@@ -6,25 +6,22 @@ diced works fully without it, this just adds one feature.
 **Why this needs a few minutes of setup instead of just working:** getting an
 AI to estimate a food means calling a model API, which means an API key. A
 key can never live in diced's own code — it's a public repo, so anyone could
-read it out and run up your bill. Instead, this Worker holds your key
-privately and diced talks to the Worker, never to the API directly.
+read it out and use it. Instead, this Worker holds your key privately and
+diced talks to the Worker, never to the API directly.
 
-**Cost:** Cloudflare Workers' free tier (100,000 requests/day) comfortably
-covers personal use. The Anthropic API itself is pay-per-use, but a single
-estimate call is a tiny prompt — expect a small fraction of a cent each.
-Realistic personal use (a few lookups a day) runs well under $1/month. Set a
-spending cap on your Anthropic account anyway (step 2) so a bug or anyone who
-somehow got your Worker URL can't surprise you.
+**Cost: $0.** Cloudflare Workers' free tier (100,000 requests/day) and
+Google's Gemini API free tier (no credit card, no billing enabled at all —
+just a usage cap per minute/day that's far above personal-use levels) both
+cover this comfortably. There is nothing to pay and nothing to set a spending
+cap on.
 
-## 1. Get an Anthropic API key
+## 1. Get a free Gemini API key
 
-1. Go to [console.anthropic.com](https://console.anthropic.com) and sign up
-   or sign in. This is separate from your claude.ai subscription — it's
-   pay-per-use API access, not Pro.
-2. Go to **Settings → Billing** and set a monthly spending limit (even $5 is
-   generous headroom for this).
-3. Go to **API Keys → Create Key**, name it something like `diced-worker`,
-   copy it somewhere safe for a moment — you'll paste it in step 3.
+1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+   and sign in with any Google account.
+2. Click **Create API key**. No billing or credit card is involved — this is
+   the free tier.
+3. Copy the key somewhere safe for a moment — you'll paste it in step 3.
 
 ## 2. Create the Worker
 
@@ -49,7 +46,7 @@ Add two, both as **Secret** (not plain text) so they're encrypted:
 
 | Name | Value |
 |---|---|
-| `ANTHROPIC_API_KEY` | the key you copied in step 1 |
+| `GEMINI_API_KEY` | the key you copied in step 1 |
 | `APP_SECRET` | any random string you make up — this is a shared password between diced and your Worker so random internet traffic can't use your API key. A password generator's output works fine. |
 
 Save/Deploy after adding both.
@@ -75,9 +72,11 @@ something simple like "an orange" → Estimate.
   this repo or deployed Pages under a different GitHub username, edit
   `ALLOWED_ORIGIN` at the top of `worker.js` to match your actual Pages URL,
   then redeploy the Worker (paste the updated code in again).
-- **"Your Worker is missing its API key"** — `ANTHROPIC_API_KEY` wasn't saved,
+- **"Your Worker is missing its API key"** — `GEMINI_API_KEY` wasn't saved,
   or was saved as plain text instead of a secret (shouldn't matter
   functionally, but re-add as a secret to be safe).
+- **"Too many requests"** — the free Gemini tier has a per-minute cap; it
+  resets within a minute, so just try again shortly.
 - **Nothing happens / network error** — double check the Worker URL was
   copied in full, including `https://`.
 
