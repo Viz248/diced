@@ -568,6 +568,17 @@ function weekTotals(dateStr){
 }
 
 /* =========================================================================
+   VERSION — bump APP_VERSION and add a line to CHANGELOG with every
+   meaningful change, so the Plan tab can show what build you're on.
+   ========================================================================= */
+const APP_VERSION = '2026-11-07.1';
+const CHANGELOG = [
+  { v: '2026-11-07.1', notes: 'AI estimate: fixed requests that could hang forever — now fail within 15-20s with a clear message.' },
+  { v: '2026-11-07',   notes: 'AI estimate: switched to the free Gemini backend, connected the Worker to GitHub for auto-deploys.' },
+  { v: '2026-11-06',   notes: 'Added AI-assisted calorie/macro estimation ("Don\'t know the calories?").' },
+];
+
+/* =========================================================================
    STORAGE — IndexedDB, device-local. One small promise wrapper; the rest of
    the app just calls the same save/add/delete functions as before.
    ========================================================================= */
@@ -1615,6 +1626,15 @@ function renderPlan(){
       <div class="field" style="margin-bottom:10px;"><span class="label">Worker URL</span><input type="text" id="aiWorkerUrl" placeholder="https://your-worker.your-name.workers.dev" value="${esc(s.aiEstimate.workerUrl||'')}"></div>
       <div class="field" style="margin-bottom:10px;"><span class="label">App secret</span><input type="text" id="aiAppSecret" placeholder="the random string you set as APP_SECRET" value="${esc(s.aiEstimate.appSecret||'')}"></div>
       <button class="btn btn-block" id="saveAiBtn">Save</button>
+    </div>
+
+    <div class="card">
+      <div class="row between">
+        <div class="label">About</div>
+        <span class="pill pill-muted">v${APP_VERSION}</span>
+      </div>
+      <div class="hr" style="margin:10px 0;"></div>
+      ${CHANGELOG.map(c=>`<p class="sub" style="margin-bottom:8px;"><b>${c.v}</b> — ${esc(c.notes)}</p>`).join('')}
     </div>
   `;
 
