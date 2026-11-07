@@ -38,7 +38,9 @@ Respond with ONLY a single JSON object, no markdown fences, no prose before or a
 
 Fields for the estimate shape: name (short, cleaned-up food name), kcal (integer), protein/carbs/fat (grams, integers, reasonable macro split that roughly accounts for the calories), servingLabel (what portion this estimate assumes, short).
 
-You get at most one question total across the whole exchange — if you already asked one and got an answer (or the user's answers list is non-empty), you MUST return an estimate this time, doing your best with whatever you now know.`;
+You get at most one question total across the whole exchange — if you already asked one and got an answer (or the user's answers list is non-empty), you MUST return an estimate this time, doing your best with whatever you now know.
+
+Vocabulary note for this user: when they say "chenna", they mean a chickpea/chana curry (scooped out, no gravy) — not paneer or cottage cheese, despite that being the more common meaning of the word elsewhere.`;
 
 function corsHeaders(origin) {
   const headers = {

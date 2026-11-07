@@ -571,8 +571,9 @@ function weekTotals(dateStr){
    VERSION — bump APP_VERSION and add a line to CHANGELOG with every
    meaningful change, so the Plan tab can show what build you're on.
    ========================================================================= */
-const APP_VERSION = '2026-11-07.3';
+const APP_VERSION = '2026-11-07.4';
 const CHANGELOG = [
+  { v: '2026-11-07.4', notes: 'AI estimate: taught it "chenna" means chickpea curry for you, not paneer — found via accuracy testing.' },
   { v: '2026-11-07.3', notes: 'AI estimate: switched to gemini-3.5-flash-lite — 500 requests/day on the free tier, plenty of headroom.' },
   { v: '2026-11-07.2', notes: 'AI estimate: switched off the gemini-flash-latest alias (hit its daily free-tier cap) to a fixed model with its own quota.' },
   { v: '2026-11-07.1', notes: 'AI estimate: fixed requests that could hang forever — now fail within 15-20s with a clear message.' },
