@@ -262,7 +262,7 @@ function defaultSettings(){
   return {
     heightCm:175, age:20, sex:'male',
     startWeightKg:75, goalWeightKg:73, startDate: todayStr(),
-    calorieFloorKcal:1800, proteinMinG:140,
+    calorieFloorKcal:1800, proteinMinG:140, fatMaxG:null,
     estMaintenanceKcal:2650,
     simpleTargetKcal:2200, simpleDeficitKcal:450,
     mode:'simple', adaptiveTargetKcal:null, adaptiveMaintenanceKcal:null, adaptiveLastUpdated:null,
@@ -571,8 +571,9 @@ function weekTotals(dateStr){
    VERSION — bump APP_VERSION and add a line to CHANGELOG with every
    meaningful change, so the Plan tab can show what build you're on.
    ========================================================================= */
-const APP_VERSION = '2026-11-07.4';
+const APP_VERSION = '2026-11-08';
 const CHANGELOG = [
+  { v: '2026-11-08', notes: 'Added a daily fat limit (Plan → Your stats), an editable daily target so you can set your own cut pace, and the AI estimate button on "Should I eat this?".' },
   { v: '2026-11-07.4', notes: 'AI estimate: taught it "chenna" means chickpea curry for you, not paneer — found via accuracy testing.' },
   { v: '2026-11-07.3', notes: 'AI estimate: switched to gemini-3.5-flash-lite — 500 requests/day on the free tier, plenty of headroom.' },
   { v: '2026-11-07.2', notes: 'AI estimate: switched off the gemini-flash-latest alias (hit its daily free-tier cap) to a fixed model with its own quota.' },
@@ -867,6 +868,9 @@ function renderToday(){
   const barClass = totals.kcal>target ? 'danger' : (pct>85?'warn':'accent');
 
   const proteinPct = Math.min(100, (totals.protein/s.proteinMinG)*100);
+  const fatPct = s.fatMaxG ? Math.min(100, (totals.fat/s.fatMaxG)*100) : 0;
+  const fatOver = s.fatMaxG && totals.fat>s.fatMaxG;
+  const fatBarClass = fatOver ? 'danger' : (fatPct>85?'warn':'accent');
   const cheatToday = isLunchCheatDay(d, s);
   const thuToday = isThursday(d);
 
@@ -952,9 +956,13 @@ function renderToday(){
     <div class="card">
       <div class="row between" style="margin-bottom:10px;"><span class="label">Protein</span><span class="sub num">${Math.round(totals.protein)} / ${s.proteinMinG} g</span></div>
       <div class="bar-track"><div class="bar-fill ${proteinPct>=100?'accent':'warn'}" style="width:${proteinPct}%"></div></div>
-      <div class="grid3" style="margin-top:12px;">
+      ${s.fatMaxG ? `
+      <div class="row between" style="margin:14px 0 10px;"><span class="label">Fat</span><span class="sub num" style="${fatOver?'color:var(--danger);':''}">${Math.round(totals.fat)} / ${s.fatMaxG} g</span></div>
+      <div class="bar-track"><div class="bar-fill ${fatBarClass}" style="width:${fatPct}%"></div></div>
+      ` : ''}
+      <div class="grid${s.fatMaxG?'2':'3'}" style="margin-top:12px;">
         <div><div class="label">Carbs</div><div class="num" style="font-weight:700;">${Math.round(totals.carbs)}g</div></div>
-        <div><div class="label">Fat</div><div class="num" style="font-weight:700;">${Math.round(totals.fat)}g</div></div>
+        ${s.fatMaxG ? '' : `<div><div class="label">Fat</div><div class="num" style="font-weight:700;">${Math.round(totals.fat)}g</div></div>`}
         <div><div class="label">Logged</div><div class="num" style="font-weight:700;">${Math.round(totals.kcal)} kcal</div></div>
       </div>
     </div>
@@ -1012,12 +1020,14 @@ function wireTodayActions(){
     if(action==='editfood'){ const f=state.foods.find(x=>x.id===el.dataset.id); if(f) openFoodEditSheetImpl(f); }
     if(action==='newfood'){ openFoodEditSheetImpl(null); }
     if(action==='newfoodfromsheet'){ openFoodEditSheetImpl(null); }
-    if(action==='openaiestimate'){ openAiEstimateSheet(); }
+    if(action==='openaiestimate'){ openAiEstimateSheet('log'); }
+    if(action==='openaiestimateshouldi'){ openAiEstimateSheet('shouldi'); }
     if(action==='aiestimatesubmit'){ aiEstimateSubmit(); }
     if(action==='aiestimateanswer'){ aiEstimateAnswer(); }
     if(action==='aiestimateskip'){ aiEstimateAnswer(true); }
     if(action==='aiestimatelog'){ aiEstimateLog(false); }
     if(action==='aiestimatesave'){ aiEstimateLog(true); }
+    if(action==='aiestimatecheck'){ aiEstimateCheckCraving(); }
     if(action==='gotoplanaisetup'){ closeSheet(); document.querySelector('[data-tab=plan]').click(); }
     if(action==='exportbackup'){ exportBackup(); }
     if(action==='dismissbackup'){ backupNudgeDismissed=true; renderAll(); }
@@ -1095,7 +1105,7 @@ function aiEstimateConfigured(){
   return !!(c && c.workerUrl && c.appSecret);
 }
 
-function openAiEstimateSheet(){
+function openAiEstimateSheet(mode){
   if(!aiEstimateConfigured()){
     openSheet(`
       <div class="sheet-head"><h3>AI estimate</h3><button class="btn btn-ghost" data-action="closesheet">✕</button></div>
@@ -1104,7 +1114,7 @@ function openAiEstimateSheet(){
     `);
     return;
   }
-  aiEst = { description:'', answers:[], result:null };
+  aiEst = { description:'', answers:[], result:null, mode: mode||'log' };
   openSheet(renderAiEstimateInput());
   document.getElementById('aiDescInput')?.focus();
 }
@@ -1128,12 +1138,16 @@ function renderAiLoading(label){
 }
 
 function renderAiError(message){
+  const shouldi = aiEst.mode==='shouldi';
+  const manualBtn = shouldi
+    ? `<button class="btn btn-block" onclick="closeSheet(); document.getElementById('siCustomName').value=aiEst.description||''; document.getElementById('siCustomKcal').focus();">Enter it manually instead</button>`
+    : `<button class="btn btn-block" onclick="closeSheet(); openFoodEditSheetImpl({name: aiEst.description||'', category:'Snack', kcal:'', protein:'', carbs:'', fat:'', servingLabel:'', isCheat:false});">Enter it manually instead</button>`;
   openSheet(`
     <div class="sheet-head"><h3>Couldn't get an estimate</h3><button class="btn btn-ghost" data-action="closesheet">✕</button></div>
     <p class="sub" style="margin-bottom:14px;">${esc(message)}</p>
     <div class="stack">
       <button class="btn btn-primary btn-block" data-action="aiestimatesubmit">Try again</button>
-      <button class="btn btn-block" onclick="closeSheet(); openFoodEditSheetImpl({name: aiEst.description||'', category:'Snack', kcal:'', protein:'', carbs:'', fat:'', servingLabel:'', isCheat:false});">Enter it manually instead</button>
+      ${manualBtn}
     </div>
   `);
 }
@@ -1214,9 +1228,10 @@ function handleAiEstimateResponse(data){
   }
   if(data.status==='estimate'){
     aiEst.result = data;
+    const shouldi = aiEst.mode==='shouldi';
     openSheet(`
       <div class="sheet-head"><h3>✨ Estimate</h3><button class="btn btn-ghost" data-action="closesheet">✕</button></div>
-      <p class="sub" style="margin-bottom:14px;">Double-check this if it looks off — you can edit any field before logging.</p>
+      <p class="sub" style="margin-bottom:14px;">Double-check this if it looks off — you can edit any field before ${shouldi?'checking it':'logging'}.</p>
       <div class="stack">
         <div class="field"><span class="label">Name</span><input type="text" id="aiName" value="${esc(data.name)}"></div>
         <div class="field"><span class="label">Serving</span><input type="text" id="aiServing" value="${esc(data.servingLabel||'')}"></div>
@@ -1224,6 +1239,7 @@ function handleAiEstimateResponse(data){
           <div class="field"><span class="label">Calories</span><input type="number" id="aiKcal" value="${data.kcal}"></div>
           <div class="field"><span class="label">Protein (g)</span><input type="number" id="aiProtein" value="${data.protein}"></div>
         </div>
+        ${shouldi ? '' : `
         <div class="grid2">
           <div class="field"><span class="label">Carbs (g)</span><input type="number" id="aiCarbs" value="${data.carbs}"></div>
           <div class="field"><span class="label">Fat (g)</span><input type="number" id="aiFat" value="${data.fat}"></div>
@@ -1233,11 +1249,15 @@ function handleAiEstimateResponse(data){
           <div class="segmented" id="aiMealPick">
             ${MEALS.map(m=>`<button data-meal="${m.k}" class="${m.k===guessMeal()?'active':''}">${m.label}</button>`).join('')}
           </div>
-        </div>
+        </div>`}
       </div>
       <div class="row" style="margin-top:14px; gap:8px;">
+        ${shouldi ? `
+        <button class="btn btn-primary btn-block" data-action="aiestimatecheck">Check this craving</button>
+        ` : `
         <button class="btn btn-primary" style="flex:1;" data-action="aiestimatelog">Log it once</button>
         <button class="btn" style="flex:1;" data-action="aiestimatesave">Save & log</button>
+        `}
       </div>
     `);
     document.querySelectorAll('#aiMealPick button').forEach(b=>{
@@ -1249,6 +1269,14 @@ function handleAiEstimateResponse(data){
     return;
   }
   renderAiError('Got an unexpected response. Try again, or enter it manually.');
+}
+
+function aiEstimateCheckCraving(){
+  const name = document.getElementById('aiName').value.trim() || aiEst.result.name;
+  const kcal = Number(document.getElementById('aiKcal').value)||0;
+  const protein = Number(document.getElementById('aiProtein').value)||0;
+  closeSheet();
+  checkShouldI(name, kcal, protein);
 }
 
 function aiEstimateLog(saveToLibrary){
@@ -1448,7 +1476,10 @@ function renderShouldI(){
         <input type="text" id="siCustomName" placeholder="Describe it">
         <input type="number" id="siCustomKcal" placeholder="Rough kcal">
       </div>
-      <button class="btn btn-primary btn-block" style="margin-top:12px;" id="siCheckBtn">Show me</button>
+      <div class="row" style="margin-top:12px; gap:8px;">
+        <button class="btn btn-primary" style="flex:1;" id="siCheckBtn">Show me</button>
+        <button class="btn" style="flex:1;" data-action="openaiestimateshouldi">✨ Don't know?</button>
+      </div>
     </div>
 
     <div id="siResult"></div>
@@ -1474,6 +1505,10 @@ function runShouldICheck(){
     kcal = Number(document.getElementById('siCustomKcal').value);
     if(!kcal){ toast('Enter a rough calorie count'); return; }
   }
+  checkShouldI(name, kcal, protein);
+}
+
+function checkShouldI(name, kcal, protein){
   shouldIFood = {name, kcal, protein};
 
   const d = state.todayDate;
@@ -1541,7 +1576,10 @@ function renderPlan(){
         <span class="sub">${s.mode==='adaptive'?'Adaptive — learning from your weigh-ins':'Simple — fixed starting target'}</span>
         <span class="pill ${s.mode==='adaptive'?'pill-accent':'pill-muted'}">${s.mode}</span>
       </div>
-      ${s.mode==='adaptive'?`<p class="sub" style="margin-top:8px;">Estimated maintenance: <b class="num">${s.adaptiveMaintenanceKcal} kcal</b> · updated ${s.adaptiveLastUpdated}</p>`:`<p class="sub" style="margin-top:8px;">Switches to adaptive automatically once you've logged food and weigh-ins on ~10+ days.</p>`}
+      ${s.mode==='adaptive'?`<p class="sub" style="margin-top:8px;">Estimated maintenance: <b class="num">${s.adaptiveMaintenanceKcal} kcal</b> · updated ${s.adaptiveLastUpdated}</p>`:`<p class="sub" style="margin-top:8px;">Estimated maintenance: <b class="num">${s.estMaintenanceKcal} kcal</b> (fixed guess until adaptive kicks in after ~10 days logged)</p>`}
+      <div class="hr" style="margin:12px 0;"></div>
+      <div class="field"><span class="sub">Daily target (kcal)</span><input type="number" id="setTarget" value="${currentBaseTarget()}"></div>
+      <p class="sub" style="margin-top:8px;">Lower = faster cut. This sets the deficit against maintenance above — won't go below your Calorie floor.</p>
     </div>
 
     <div class="card stack">
@@ -1597,6 +1635,9 @@ function renderPlan(){
       <div class="grid2" style="margin-top:10px;">
         <div class="field"><span class="sub">Protein floor (g)</span><input type="number" id="setProtein" value="${s.proteinMinG}"></div>
         <div class="field"><span class="sub">Calorie floor</span><input type="number" id="setFloor" value="${s.calorieFloorKcal}"></div>
+      </div>
+      <div class="grid2" style="margin-top:10px;">
+        <div class="field"><span class="sub">Fat limit (g/day)</span><input type="number" id="setFat" placeholder="off" value="${s.fatMaxG??''}"></div>
       </div>
       <button class="btn btn-block" style="margin-top:12px;" id="saveStatsBtn">Save</button>
     </div>
@@ -1659,6 +1700,15 @@ function renderPlan(){
     s.goalWeightKg = Number(document.getElementById('setGoal').value)||s.goalWeightKg;
     s.proteinMinG = Number(document.getElementById('setProtein').value)||s.proteinMinG;
     s.calorieFloorKcal = Number(document.getElementById('setFloor').value)||s.calorieFloorKcal;
+    const fatRaw = document.getElementById('setFat').value.trim();
+    s.fatMaxG = fatRaw==='' ? null : (Number(fatRaw)||null);
+    const targetRaw = Number(document.getElementById('setTarget').value);
+    if(targetRaw){
+      const newTarget = Math.max(s.calorieFloorKcal, targetRaw);
+      if(s.mode==='adaptive'){ s.adaptiveTargetKcal = newTarget; }
+      else { s.simpleTargetKcal = newTarget; }
+      s.simpleDeficitKcal = Math.max(0, s.estMaintenanceKcal - newTarget);
+    }
     saveSettings();
     toast('Saved');
     renderAll();
