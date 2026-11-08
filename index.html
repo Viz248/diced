@@ -571,8 +571,9 @@ function weekTotals(dateStr){
    VERSION — bump APP_VERSION and add a line to CHANGELOG with every
    meaningful change, so the Plan tab can show what build you're on.
    ========================================================================= */
-const APP_VERSION = '2026-11-08';
+const APP_VERSION = '2026-11-08.1';
 const CHANGELOG = [
+  { v: '2026-11-08.1', notes: 'Fat limit now scales up on cheat days along with your calorie budget, instead of a flat cap that made no sense on those days.' },
   { v: '2026-11-08', notes: 'Added a daily fat limit (Plan → Your stats), an editable daily target so you can set your own cut pace, and the AI estimate button on "Should I eat this?".' },
   { v: '2026-11-07.4', notes: 'AI estimate: taught it "chenna" means chickpea curry for you, not paneer — found via accuracy testing.' },
   { v: '2026-11-07.3', notes: 'AI estimate: switched to gemini-3.5-flash-lite — 500 requests/day on the free tier, plenty of headroom.' },
@@ -868,8 +869,12 @@ function renderToday(){
   const barClass = totals.kcal>target ? 'danger' : (pct>85?'warn':'accent');
 
   const proteinPct = Math.min(100, (totals.protein/s.proteinMinG)*100);
-  const fatPct = s.fatMaxG ? Math.min(100, (totals.fat/s.fatMaxG)*100) : 0;
-  const fatOver = s.fatMaxG && totals.fat>s.fatMaxG;
+  // scale the fat ceiling with the day's actual calorie budget — a flat gram cap makes no
+  // sense on cheat days, which are deliberately a bigger budget by design
+  const weekPlan = computeWeeklyPlan();
+  const fatMaxToday = s.fatMaxG ? Math.round(s.fatMaxG * (target/weekPlan.dailyBase)) : null;
+  const fatPct = fatMaxToday ? Math.min(100, (totals.fat/fatMaxToday)*100) : 0;
+  const fatOver = fatMaxToday && totals.fat>fatMaxToday;
   const fatBarClass = fatOver ? 'danger' : (fatPct>85?'warn':'accent');
   const cheatToday = isLunchCheatDay(d, s);
   const thuToday = isThursday(d);
@@ -957,7 +962,7 @@ function renderToday(){
       <div class="row between" style="margin-bottom:10px;"><span class="label">Protein</span><span class="sub num">${Math.round(totals.protein)} / ${s.proteinMinG} g</span></div>
       <div class="bar-track"><div class="bar-fill ${proteinPct>=100?'accent':'warn'}" style="width:${proteinPct}%"></div></div>
       ${s.fatMaxG ? `
-      <div class="row between" style="margin:14px 0 10px;"><span class="label">Fat</span><span class="sub num" style="${fatOver?'color:var(--danger);':''}">${Math.round(totals.fat)} / ${s.fatMaxG} g</span></div>
+      <div class="row between" style="margin:14px 0 10px;"><span class="label">Fat</span><span class="sub num" style="${fatOver?'color:var(--danger);':''}">${Math.round(totals.fat)} / ${fatMaxToday} g${cheatToday||thuToday?' (cheat day)':''}</span></div>
       <div class="bar-track"><div class="bar-fill ${fatBarClass}" style="width:${fatPct}%"></div></div>
       ` : ''}
       <div class="grid${s.fatMaxG?'2':'3'}" style="margin-top:12px;">
