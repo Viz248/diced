@@ -571,8 +571,9 @@ function weekTotals(dateStr){
    VERSION — bump APP_VERSION and add a line to CHANGELOG with every
    meaningful change, so the Plan tab can show what build you're on.
    ========================================================================= */
-const APP_VERSION = '2026-11-08.1';
+const APP_VERSION = '2026-11-10';
 const CHANGELOG = [
+  { v: '2026-11-10', notes: 'AI estimate: carries over text already typed (search bar / craving field) and skips the redundant retype box; added a "Check again" button so editing name/serving actually re-asks the AI; eggs now default to medium not large.' },
   { v: '2026-11-08.1', notes: 'Fat limit now scales up on cheat days along with your calorie budget, instead of a flat cap that made no sense on those days.' },
   { v: '2026-11-08', notes: 'Added a daily fat limit (Plan → Your stats), an editable daily target so you can set your own cut pace, and the AI estimate button on "Should I eat this?".' },
   { v: '2026-11-07.4', notes: 'AI estimate: taught it "chenna" means chickpea curry for you, not paneer — found via accuracy testing.' },
@@ -1025,14 +1026,15 @@ function wireTodayActions(){
     if(action==='editfood'){ const f=state.foods.find(x=>x.id===el.dataset.id); if(f) openFoodEditSheetImpl(f); }
     if(action==='newfood'){ openFoodEditSheetImpl(null); }
     if(action==='newfoodfromsheet'){ openFoodEditSheetImpl(null); }
-    if(action==='openaiestimate'){ openAiEstimateSheet('log'); }
-    if(action==='openaiestimateshouldi'){ openAiEstimateSheet('shouldi'); }
+    if(action==='openaiestimate'){ openAiEstimateSheet('log', document.getElementById('foodSearchInput')?.value.trim()); }
+    if(action==='openaiestimateshouldi'){ openAiEstimateSheet('shouldi', document.getElementById('siCustomName')?.value.trim()); }
     if(action==='aiestimatesubmit'){ aiEstimateSubmit(); }
     if(action==='aiestimateanswer'){ aiEstimateAnswer(); }
     if(action==='aiestimateskip'){ aiEstimateAnswer(true); }
     if(action==='aiestimatelog'){ aiEstimateLog(false); }
     if(action==='aiestimatesave'){ aiEstimateLog(true); }
     if(action==='aiestimatecheck'){ aiEstimateCheckCraving(); }
+    if(action==='aiestimaterecalc'){ aiEstimateRecalc(); }
     if(action==='gotoplanaisetup'){ closeSheet(); document.querySelector('[data-tab=plan]').click(); }
     if(action==='exportbackup'){ exportBackup(); }
     if(action==='dismissbackup'){ backupNudgeDismissed=true; renderAll(); }
@@ -1110,7 +1112,7 @@ function aiEstimateConfigured(){
   return !!(c && c.workerUrl && c.appSecret);
 }
 
-function openAiEstimateSheet(mode){
+function openAiEstimateSheet(mode, prefill){
   if(!aiEstimateConfigured()){
     openSheet(`
       <div class="sheet-head"><h3>AI estimate</h3><button class="btn btn-ghost" data-action="closesheet">✕</button></div>
@@ -1119,9 +1121,15 @@ function openAiEstimateSheet(mode){
     `);
     return;
   }
-  aiEst = { description:'', answers:[], result:null, mode: mode||'log' };
-  openSheet(renderAiEstimateInput());
-  document.getElementById('aiDescInput')?.focus();
+  aiEst = { description: prefill||'', answers:[], result:null, mode: mode||'log' };
+  if(prefill){
+    // already typed a description elsewhere (e.g. the food search bar) — skip the
+    // redundant "what did you eat?" box and go straight to the estimate
+    aiEstimateSubmit();
+  } else {
+    openSheet(renderAiEstimateInput());
+    document.getElementById('aiDescInput')?.focus();
+  }
 }
 
 function renderAiEstimateInput(){
@@ -1256,7 +1264,8 @@ function handleAiEstimateResponse(data){
           </div>
         </div>`}
       </div>
-      <div class="row" style="margin-top:14px; gap:8px;">
+      <button class="btn btn-block" style="margin-top:14px;" data-action="aiestimaterecalc">↻ Check again (if you edited name/serving)</button>
+      <div class="row" style="margin-top:8px; gap:8px;">
         ${shouldi ? `
         <button class="btn btn-primary btn-block" data-action="aiestimatecheck">Check this craving</button>
         ` : `
@@ -1274,6 +1283,21 @@ function handleAiEstimateResponse(data){
     return;
   }
   renderAiError('Got an unexpected response. Try again, or enter it manually.');
+}
+
+async function aiEstimateRecalc(){
+  const name = document.getElementById('aiName').value.trim();
+  const serving = document.getElementById('aiServing').value.trim();
+  aiEst.description = serving ? `${name} (${serving})` : name;
+  if(!aiEst.description){ toast('Type a name first'); return; }
+  aiEst.answers = [];
+  renderAiLoading('Re-checking ' + aiEst.description + '…');
+  try{
+    const data = await callAiEstimateApi();
+    handleAiEstimateResponse(data);
+  }catch(e){
+    renderAiError(e.message);
+  }
 }
 
 function aiEstimateCheckCraving(){

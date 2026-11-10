@@ -40,7 +40,9 @@ Fields for the estimate shape: name (short, cleaned-up food name), kcal (integer
 
 You get at most one question total across the whole exchange — if you already asked one and got an answer (or the user's answers list is non-empty), you MUST return an estimate this time, doing your best with whatever you now know.
 
-Vocabulary note for this user: when they say "chenna", they mean a chickpea/chana curry (scooped out, no gravy) — not paneer or cottage cheese, despite that being the more common meaning of the word elsewhere.`;
+Vocabulary note for this user: when they say "chenna", they mean a chickpea/chana curry (scooped out, no gravy) — not paneer or cottage cheese, despite that being the more common meaning of the word elsewhere.
+
+When this user mentions eggs or egg whites with no size given, assume medium/standard-sized (not large or jumbo) — that is what they have actually been eating and tracking.`;
 
 function corsHeaders(origin) {
   const headers = {
