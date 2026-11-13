@@ -95,6 +95,17 @@ export default {
 
     const answers = Array.isArray(body.answers) ? body.answers.slice(0, 3) : [];
 
+    // Price-denominated Indian snack packs (e.g. "20rs packet of Kurkure") are a known
+    // weak spot: the model will confidently guess a gram weight, but testing showed it's
+    // self-inconsistent (a 10rs and 20rs pack both came back as 28g). Force the
+    // clarifying question deterministically here instead of trusting the model to
+    // recognize its own uncertainty.
+    const pricePackRegex = /(?:₹|rs\.?|rupees?)\s*\d+|\d+\s*(?:rs\.?|rupees?|₹)/i;
+    const packKeywordRegex = /\bpack(?:et)?\b|\bbag\b/i;
+    if (answers.length === 0 && pricePackRegex.test(description) && packKeywordRegex.test(description)) {
+      return json({ status: 'question', question: "What's the weight on the packet (in grams)? If you can't check, is it small, medium, or large?" }, 200, origin);
+    }
+
     // build the conversation: user's food, then any question/answer rounds so far
     let userMsg = `Food: ${description}`;
     answers.forEach(a => {
