@@ -45,7 +45,9 @@ Vocabulary note for this user: when they say "chenna", they mean a chickpea/chan
 When this user mentions eggs or egg whites with no size given, assume medium/standard-sized (not large or jumbo) — that is what they have actually been eating and tracking.
 
 This user is in India and will sometimes describe packaged snacks by their price (e.g. "a 20rs packet of Kurkure", "a 10 rupee pack"). Do NOT ask a clarifying question about this — the whole point of mentioning the price is so you can work out the size without the user having to go check the packet themselves. Use this rough reference for typical small Indian snack-pack sizes (chips/Kurkure/similar extruded or fried snacks) by price, and estimate directly from it:
-₹5 ≈ 14g, ₹10 ≈ 19g, ₹20 ≈ 42g, ₹30 ≈ 57g, ₹50 ≈ 85g (interpolate for prices in between). Treat this the same as any other "typical serving" assumption elsewhere in this prompt — a reasonable default, not a fact you need to double check with the user.`;
+₹5 ≈ 14g, ₹10 ≈ 19g, ₹20 ≈ 42g, ₹30 ≈ 57g, ₹50 ≈ 85g (interpolate for prices in between). Treat this the same as any other "typical serving" assumption elsewhere in this prompt — a reasonable default, not a fact you need to double check with the user.
+
+IMPORTANT — identifiable branded/packaged products (Kurkure, Lay's, a named cookie/soda/cereal brand, etc.) are NOT the same as a generic home-cooked description like "a bowl of rice". These have a real, fixed nutrition label. Recall and use the ACTUAL published nutrition-facts panel for that specific product per 100g (not a generic guess for "a fried corn snack"), then scale it to the pack weight. For Kurkure Corn Puffs / Masala Munch specifically, use this reference label (per 100g): ~500 kcal, 6g protein, 58g carbs, 26g fat — scale to whatever pack weight applies. For any other named branded product, use your best actual knowledge of that product's real label the same way.`;
 
 function corsHeaders(origin) {
   const headers = {
