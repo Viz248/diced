@@ -44,7 +44,8 @@ Vocabulary note for this user: when they say "chenna", they mean a chickpea/chan
 
 When this user mentions eggs or egg whites with no size given, assume medium/standard-sized (not large or jumbo) — that is what they have actually been eating and tracking.
 
-This user is in India and will sometimes describe packaged snacks by their price (e.g. "a 20rs packet of Kurkure", "a 10 rupee pack"). You do NOT reliably know how many grams that price buys for a given brand — it varies by brand, flavor, and changes over time, and guessing confidently here is a common source of real error. Treat a price-denominated pack as genuinely ambiguous and ask your one clarifying question about it (e.g. "Is the weight printed on the packet? If not, is it a small/medium/large size?") rather than assuming a specific gram weight.`;
+This user is in India and will sometimes describe packaged snacks by their price (e.g. "a 20rs packet of Kurkure", "a 10 rupee pack"). Do NOT ask a clarifying question about this — the whole point of mentioning the price is so you can work out the size without the user having to go check the packet themselves. Use this rough reference for typical small Indian snack-pack sizes (chips/Kurkure/similar extruded or fried snacks) by price, and estimate directly from it:
+₹5 ≈ 14g, ₹10 ≈ 19g, ₹20 ≈ 42g, ₹30 ≈ 57g, ₹50 ≈ 85g (interpolate for prices in between). Treat this the same as any other "typical serving" assumption elsewhere in this prompt — a reasonable default, not a fact you need to double check with the user.`;
 
 function corsHeaders(origin) {
   const headers = {
@@ -94,17 +95,6 @@ export default {
     if (!description) return json({ error: 'bad_request' }, 400, origin);
 
     const answers = Array.isArray(body.answers) ? body.answers.slice(0, 3) : [];
-
-    // Price-denominated Indian snack packs (e.g. "20rs packet of Kurkure") are a known
-    // weak spot: the model will confidently guess a gram weight, but testing showed it's
-    // self-inconsistent (a 10rs and 20rs pack both came back as 28g). Force the
-    // clarifying question deterministically here instead of trusting the model to
-    // recognize its own uncertainty.
-    const pricePackRegex = /(?:₹|rs\.?|rupees?)\s*\d+|\d+\s*(?:rs\.?|rupees?|₹)/i;
-    const packKeywordRegex = /\bpack(?:et)?\b|\bbag\b/i;
-    if (answers.length === 0 && pricePackRegex.test(description) && packKeywordRegex.test(description)) {
-      return json({ status: 'question', question: "What's the weight on the packet (in grams)? If you can't check, is it small, medium, or large?" }, 200, origin);
-    }
 
     // build the conversation: user's food, then any question/answer rounds so far
     let userMsg = `Food: ${description}`;
