@@ -571,8 +571,9 @@ function weekTotals(dateStr){
    VERSION — bump APP_VERSION and add a line to CHANGELOG with every
    meaningful change, so the Plan tab can show what build you're on.
    ========================================================================= */
-const APP_VERSION = '2026-11-10';
+const APP_VERSION = '2026-11-13';
 const CHANGELOG = [
+  { v: '2026-11-13', notes: 'Added a quantity stepper when logging — ×3 roti is one tap-through now, not three. AI estimate also asks instead of guessing when you give a price-based pack size (e.g. "20rs packet"), since that guess was unreliable.' },
   { v: '2026-11-10', notes: 'AI estimate: carries over text already typed (search bar / craving field) and skips the redundant retype box; added a "Check again" button so editing name/serving actually re-asks the AI; eggs now default to medium not large.' },
   { v: '2026-11-08.1', notes: 'Fat limit now scales up on cheat days along with your calorie budget, instead of a flat cap that made no sense on those days.' },
   { v: '2026-11-08', notes: 'Added a daily fat limit (Plan → Your stats), an editable daily target so you can set your own cut pace, and the AI estimate button on "Should I eat this?".' },
@@ -1047,12 +1048,13 @@ function wireTodayActions(){
   });
 }
 
-function logFood(food, variant, meal){
+function logFood(food, variant, meal, qty){
   const base = variant || food;
+  const n = Math.max(1, qty||1);
   bumpUsage(food.id);
   addLog({
-    type:'food', foodId:food.id, name: variant ? food.name+' — '+variant.label : food.name,
-    kcal: base.kcal, protein: base.protein, carbs: base.carbs, fat: base.fat,
+    type:'food', foodId:food.id, name: (variant ? food.name+' — '+variant.label : food.name) + (n>1?' ×'+n:''),
+    kcal: base.kcal*n, protein: base.protein*n, carbs: base.carbs*n, fat: base.fat*n,
     meal: meal || guessMeal(),
   });
 }
@@ -1257,6 +1259,7 @@ function handleAiEstimateResponse(data){
           <div class="field"><span class="label">Carbs (g)</span><input type="number" id="aiCarbs" value="${data.carbs}"></div>
           <div class="field"><span class="label">Fat (g)</span><input type="number" id="aiFat" value="${data.fat}"></div>
         </div>
+        <div class="field"><span class="label">Quantity (how many of this serving)</span><input type="number" id="aiQty" value="1" min="1" step="1"></div>
         <div class="field">
           <span class="label">Log as</span>
           <div class="segmented" id="aiMealPick">
@@ -1311,6 +1314,8 @@ function aiEstimateCheckCraving(){
 function aiEstimateLog(saveToLibrary){
   const activeMealBtn = document.querySelector('#aiMealPick button.active');
   const meal = activeMealBtn ? activeMealBtn.dataset.meal : guessMeal();
+  const qty = Math.max(1, Number(document.getElementById('aiQty')?.value)||1);
+  // per-serving values — this is what gets saved to the library (if asked), unscaled
   const entry = {
     name: document.getElementById('aiName').value.trim() || aiEst.result.name,
     servingLabel: document.getElementById('aiServing').value.trim(),
@@ -1321,12 +1326,12 @@ function aiEstimateLog(saveToLibrary){
   };
   if(saveToLibrary){
     const food = upsertFood({ name:entry.name, servingLabel:entry.servingLabel, category:'Other', kcal:entry.kcal, protein:entry.protein, carbs:entry.carbs, fat:entry.fat, isCheat:false, favorite:false, usageCount:0 });
-    logFood(food, null, meal);
+    logFood(food, null, meal, qty);
   } else {
-    addLog({ type:'food', name:entry.name, kcal:entry.kcal, protein:entry.protein, carbs:entry.carbs, fat:entry.fat, meal });
+    addLog({ type:'food', name: entry.name+(qty>1?' ×'+qty:''), kcal:entry.kcal*qty, protein:entry.protein*qty, carbs:entry.carbs*qty, fat:entry.fat*qty, meal });
   }
   closeSheet();
-  toast('Logged ' + entry.name);
+  toast('Logged ' + entry.name + (qty>1?' ×'+qty:''));
 }
 
 window.pickFood = function(id){
@@ -1342,7 +1347,15 @@ window.pickFood = function(id){
   } else {
     openSheet(`
       <div class="sheet-head"><h3>${esc(f.name)}</h3><button class="btn btn-ghost" data-action="closesheet">✕</button></div>
-      <p class="sub" style="margin-bottom:14px;">${f.kcal} kcal · ${f.protein}g protein · ${f.carbs}g carbs · ${f.fat}g fat</p>
+      <p class="sub" style="margin-bottom:14px;" id="pickFoodMacros">${f.kcal} kcal · ${f.protein}g protein · ${f.carbs}g carbs · ${f.fat}g fat</p>
+      <div class="row between" style="margin-bottom:14px;">
+        <span class="label">Quantity</span>
+        <div class="row" style="gap:8px; align-items:center;">
+          <button class="btn btn-sm" id="qtyMinus" type="button">−</button>
+          <input type="number" id="pickFoodQty" value="1" min="1" step="1" style="width:56px; text-align:center;">
+          <button class="btn btn-sm" id="qtyPlus" type="button">+</button>
+        </div>
+      </div>
       <div class="field" style="margin-bottom:14px;">
         <span class="label">Log as</span>
         <div class="segmented" id="mealPick">
@@ -1352,6 +1365,14 @@ window.pickFood = function(id){
       <button class="btn btn-primary btn-block" onclick="confirmLog('${f.id}', null)">Log it</button>
     `);
     wireMealPicker();
+    const qtyInput = document.getElementById('pickFoodQty');
+    const updateMacroPreview = ()=>{
+      const qty = Math.max(1, Number(qtyInput.value)||1);
+      document.getElementById('pickFoodMacros').textContent = `${Math.round(f.kcal*qty)} kcal · ${Math.round(f.protein*qty)}g protein · ${Math.round(f.carbs*qty)}g carbs · ${Math.round(f.fat*qty)}g fat`;
+    };
+    document.getElementById('qtyMinus').addEventListener('click', ()=>{ qtyInput.value = Math.max(1, (Number(qtyInput.value)||1)-1); updateMacroPreview(); });
+    document.getElementById('qtyPlus').addEventListener('click', ()=>{ qtyInput.value = (Number(qtyInput.value)||1)+1; updateMacroPreview(); });
+    qtyInput.addEventListener('input', updateMacroPreview);
   }
 };
 function wireMealPicker(){
@@ -1368,9 +1389,10 @@ window.confirmLog = function(foodId, variantIdx){
   const variant = variantIdx!=null ? f.variants[variantIdx] : null;
   const activeMealBtn = document.querySelector('#mealPick button.active');
   const meal = activeMealBtn ? activeMealBtn.dataset.meal : guessMeal();
-  logFood(f, variant, meal);
+  const qty = Number(document.getElementById('pickFoodQty')?.value)||1;
+  logFood(f, variant, meal, qty);
   closeSheet();
-  toast('Logged '+f.name);
+  toast('Logged '+f.name+(qty>1?' ×'+qty:''));
 };
 window.openFoodEditSheet = function(food){
   openFoodEditSheetImpl(food);
