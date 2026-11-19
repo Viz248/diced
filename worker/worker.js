@@ -24,11 +24,11 @@
 
 const ALLOWED_ORIGIN = 'https://viz248.github.io';
 const MODEL = 'gemini-3.5-flash-lite';
-const MAX_TOKENS = 400;
+const MAX_TOKENS = 800;
 
 const SYSTEM_PROMPT = `You estimate calories and macros for a food a user is about to log in a personal diet-tracking app. You are not a doctor and this is not medical advice — you are giving a practical, reasonable estimate for someone tracking their own food.
 
-Respond with ONLY a single JSON object, no markdown fences, no prose before or after it. Two possible shapes:
+Respond with ONLY a single JSON object, no markdown fences, no prose before or after it — this applies even when you use search to look something up; cite nothing, just fold what you found into the numbers. Two possible shapes:
 
 1) If the portion/preparation is genuinely ambiguous enough that the calorie estimate would swing by more than roughly 30% depending on the answer (e.g. "a bowl of rice" could be 150 or 600 kcal; "a burger" could be a slider or a quarter-pounder with everything), and you have not already asked a question in this conversation, ask exactly ONE short, concrete clarifying question:
 {"status":"question","question":"Small, medium, or large bowl?"}
@@ -47,7 +47,7 @@ When this user mentions eggs or egg whites with no size given, assume medium/sta
 This user is in India and will sometimes describe packaged snacks by their price (e.g. "a 20rs packet of Kurkure", "a 10 rupee pack"). Do NOT ask a clarifying question about this — the whole point of mentioning the price is so you can work out the size without the user having to go check the packet themselves. Use this rough reference for typical small Indian snack-pack sizes (chips/Kurkure/similar extruded or fried snacks) by price, and estimate directly from it:
 ₹5 ≈ 14g, ₹10 ≈ 19g, ₹20 ≈ 42g, ₹30 ≈ 57g, ₹50 ≈ 85g (interpolate for prices in between). Treat this the same as any other "typical serving" assumption elsewhere in this prompt — a reasonable default, not a fact you need to double check with the user.
 
-IMPORTANT — identifiable branded/packaged products (Kurkure, Lay's, a named cookie/soda/cereal brand, etc.) are NOT the same as a generic home-cooked description like "a bowl of rice". These have a real, fixed nutrition label. Recall and use the ACTUAL published nutrition-facts panel for that specific product per 100g (not a generic guess for "a fried corn snack"), then scale it to the pack weight. For Kurkure Corn Puffs / Masala Munch specifically, use this reference label (per 100g): ~500 kcal, 6g protein, 58g carbs, 26g fat — scale to whatever pack weight applies. For any other named branded product, use your best actual knowledge of that product's real label the same way.`;
+IMPORTANT — identifiable branded/packaged products (Kurkure, Lay's, a named cookie/soda/cereal brand, etc.) are NOT the same as a generic home-cooked description like "a bowl of rice". These have a real, fixed nutrition label. You have a search tool — use it to look up the actual current published nutrition-facts panel for that specific product per 100g when you're not fully certain of the exact numbers from memory (not a generic guess for "a fried corn snack"), then scale it to the pack weight. For Kurkure Corn Puffs / Masala Munch specifically, use this reference label (per 100g) unless search turns up something more specific/current: ~500 kcal, 6g protein, 58g carbs, 26g fat. For any other named branded product, search for its real label the same way rather than guessing from general knowledge alone.`;
 
 function corsHeaders(origin) {
   const headers = {
@@ -117,7 +117,8 @@ export default {
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
             contents: [{ role: 'user', parts: [{ text: userMsg }] }],
-            generationConfig: { maxOutputTokens: MAX_TOKENS, responseMimeType: 'application/json' },
+            tools: [{ google_search: {} }],
+            generationConfig: { maxOutputTokens: MAX_TOKENS },
           }),
           signal: AbortSignal.timeout(15000),
         }
