@@ -322,10 +322,14 @@ function isCheatSundayWeek(dateStr, anchor){
   const weeks = Math.round((parseD(thisMon)-parseD(anchorMon))/(7*864e5));
   return (weeks % 2 === 0);
 }
+function effectiveCheatSunday(dateStr, settings){
+  const override = state.days[dateStr]?.isCheatSunday;
+  return override!=null ? override : isCheatSundayWeek(dateStr, settings.cheatSundayAnchor);
+}
 function isLunchCheatDay(dateStr, settings){
   const wd = weekdayOf(dateStr);
   if(wd===2 || wd===6) return true; // Tue, Sat
-  if(wd===0) return isCheatSundayWeek(dateStr, settings.cheatSundayAnchor);
+  if(wd===0) return effectiveCheatSunday(dateStr, settings);
   return false;
 }
 function isThursday(dateStr){return weekdayOf(dateStr)===4;}
@@ -524,7 +528,7 @@ function dayTargetFor(dateStr){
   let extra = 0;
   if(wd===2) extra += plan.tueExtra;
   if(wd===6) extra += plan.satExtra;
-  if(wd===0 && isCheatSundayWeek(dateStr, s.cheatSundayAnchor)) extra += plan.sunExtra*2;
+  if(wd===0 && effectiveCheatSunday(dateStr, s)) extra += plan.sunExtra*2;
   if(isThursday(dateStr)) extra += plan.thuExtra;
 
   const steps = state.days[dateStr]?.steps;
@@ -571,8 +575,9 @@ function weekTotals(dateStr){
    VERSION — bump APP_VERSION and add a line to CHANGELOG with every
    meaningful change, so the Plan tab can show what build you're on.
    ========================================================================= */
-const APP_VERSION = '2026-11-13';
+const APP_VERSION = '2026-11-19';
 const CHANGELOG = [
+  { v: '2026-11-19', notes: 'Fixed the Sunday cheat-day toggle — it was saving but nothing actually read it, so it did nothing. Added a "last week" review card on Trends: what went over, protein/fat misses, missed logging days, weight change.' },
   { v: '2026-11-13', notes: 'Added a quantity stepper when logging — ×3 roti is one tap-through now, not three. AI estimate also asks instead of guessing when you give a price-based pack size (e.g. "20rs packet"), since that guess was unreliable.' },
   { v: '2026-11-10', notes: 'AI estimate: carries over text already typed (search bar / craving field) and skips the redundant retype box; added a "Check again" button so editing name/serving actually re-asks the AI; eggs now default to medium not large.' },
   { v: '2026-11-08.1', notes: 'Fat limit now scales up on cheat days along with your calorie budget, instead of a flat cap that made no sense on those days.' },
@@ -1812,6 +1817,89 @@ function barChartSvg(bars){
   </svg>`;
 }
 
+function computeWeeklyReview(){
+  const s = state.settings;
+  const thisMon = mondayOf(todayStr());
+  const reviewMon = addDays(thisMon, -7);
+  const days = []; for(let i=0;i<7;i++) days.push(addDays(reviewMon, i));
+  const plan = computeWeeklyPlan();
+
+  let loggedDays=0, kcalSum=0, weekTargetTotal=0, kcalOverDays=0, worstOverDay=null, worstOverAmt=0;
+  let proteinHitDays=0, fatOverDays=0;
+  const missedDays = [];
+  const fatEnabled = !!s.fatMaxG;
+
+  days.forEach(d=>{
+    const logs = state.logsByDate[d]||[];
+    const t = totalsFor(d);
+    const target = dayTargetFor(d);
+    weekTargetTotal += target;
+    if(logs.length>0){
+      loggedDays++;
+      kcalSum += t.kcal;
+      const over = t.kcal - target;
+      if(over>0){ kcalOverDays++; if(over>worstOverAmt){ worstOverAmt=over; worstOverDay=d; } }
+      if(t.protein >= s.proteinMinG) proteinHitDays++;
+      if(fatEnabled){
+        const fatMaxDay = Math.round(s.fatMaxG * (target/plan.dailyBase));
+        if(t.fat > fatMaxDay) fatOverDays++;
+      }
+    } else {
+      missedDays.push(d);
+    }
+  });
+
+  const weightDays = days.filter(d=>state.days[d]?.weightKg!=null);
+  let weightChange = null;
+  if(weightDays.length>=2){
+    weightChange = state.days[weightDays[weightDays.length-1]].weightKg - state.days[weightDays[0]].weightKg;
+  }
+
+  const notes = [];
+  if(missedDays.length>0){
+    notes.push(`${missedDays.length} day${missedDays.length!==1?'s':''} not logged (${missedDays.map(d=>WD_NAMES[weekdayOf(d)]).join(', ')}) — hard to know what actually happened ${missedDays.length!==1?'those days':'that day'}.`);
+  }
+  const trackedDays = loggedDays || 1;
+  const kcalDiffPerDay = (kcalSum - (weekTargetTotal*(loggedDays/7))) / trackedDays;
+  if(loggedDays>0 && kcalOverDays>=3){
+    notes.push(`Over budget ${kcalOverDays}/${loggedDays} logged days, averaging +${Math.round(Math.max(0,kcalDiffPerDay))} kcal/day over. Worst day: ${worstOverDay?fmtDateShort(worstOverDay)+' (+'+Math.round(worstOverAmt)+' kcal)':'—'}.`);
+  }
+  if(loggedDays>0 && proteinHitDays < Math.ceil(loggedDays*0.6)){
+    notes.push(`Protein floor hit only ${proteinHitDays}/${loggedDays} logged days.`);
+  }
+  if(fatEnabled && fatOverDays>=3){
+    notes.push(`Fat limit exceeded on ${fatOverDays}/${loggedDays} logged days.`);
+  }
+  if(weightChange!=null){
+    const targetWeekly = plan.weeklyLossKg;
+    const paceNote = weightChange<=0 ? `−${Math.abs(weightChange).toFixed(1)} kg this week (pace target: −${targetWeekly.toFixed(1)} kg/week)` : `+${weightChange.toFixed(1)} kg this week — up, not down`;
+    notes.push(paceNote);
+  }
+  if(notes.length===0 && loggedDays===7){
+    notes.push('Nothing major off — logged every day, stayed within budget. Keep doing exactly this.');
+  }
+
+  return { reviewMon, reviewEnd: days[6], days, loggedDays, missedDays, kcalOverDays, worstOverDay, worstOverAmt, proteinHitDays, fatEnabled, fatOverDays, weightChange, notes };
+}
+
+function renderWeeklyReviewCard(){
+  const r = computeWeeklyReview();
+  if(r.loggedDays===0){
+    return `
+    <div class="card">
+      <div class="label" style="margin-bottom:10px;">Last week (${fmtDateShort(r.reviewMon)}–${fmtDateShort(r.reviewEnd)})</div>
+      <p class="sub">Nothing logged that week — no review to show.</p>
+    </div>`;
+  }
+  return `
+    <div class="card">
+      <div class="label" style="margin-bottom:10px;">Last week (${fmtDateShort(r.reviewMon)}–${fmtDateShort(r.reviewEnd)})</div>
+      <ul style="margin:0; padding-left:18px;">
+        ${r.notes.map(n=>`<li class="sub" style="margin-bottom:6px;">${esc(n)}</li>`).join('')}
+      </ul>
+    </div>`;
+}
+
 function renderTrends(){
   const weightDates = Object.keys(state.days).filter(d=>state.days[d].weightKg!=null).sort();
   const avgPoints = weightDates.map(d=>({v: trailingAvg7Weight(d) ?? state.days[d].weightKg, label: fmtDateShort(d)}));
@@ -1834,6 +1922,7 @@ function renderTrends(){
 
   document.getElementById('tab-trends').innerHTML = `
     <h2 style="margin-bottom:14px;">Trends</h2>
+    ${renderWeeklyReviewCard()}
 
     <div class="card">
       <div class="row between" style="margin-bottom:10px;">
