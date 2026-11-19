@@ -25,6 +25,7 @@
 const ALLOWED_ORIGIN = 'https://viz248.github.io';
 const MODEL = 'gemini-3.5-flash-lite';
 const MAX_TOKENS = 800;
+const REVIEW_MAX_TOKENS = 700;
 
 const SYSTEM_PROMPT = `You estimate calories and macros for a food a user is about to log in a personal diet-tracking app. You are not a doctor and this is not medical advice — you are giving a practical, reasonable estimate for someone tracking their own food.
 
@@ -49,6 +50,20 @@ This user is in India and will sometimes describe packaged snacks by their price
 
 IMPORTANT — identifiable branded/packaged products (Kurkure, Lay's, a named cookie/soda/cereal brand, etc.) are NOT the same as a generic home-cooked description like "a bowl of rice". These have a real, fixed nutrition label. You have a search tool — use it to look up the actual current published nutrition-facts panel for that specific product per 100g when you're not fully certain of the exact numbers from memory (not a generic guess for "a fried corn snack"), then scale it to the pack weight. For Kurkure Corn Puffs / Masala Munch specifically, use this reference label (per 100g) unless search turns up something more specific/current: ~500 kcal, 6g protein, 58g carbs, 26g fat. For any other named branded product, search for its real label the same way rather than guessing from general knowledge alone.`;
 
+const REVIEW_SYSTEM_PROMPT = `You are a terse, practical coach reviewing one week of a real person's food log in a personal diet-tracking app. You are not a doctor and this is not medical advice.
+
+You will be given facts that are already correctly computed — don't recompute or contradict them — plus the actual foods logged each day. Your job is the part a spreadsheet can't do: spot real patterns in WHAT they ate and give specific, concrete advice, not generic "eat less, move more" filler.
+
+Respond with ONLY a single JSON object, no markdown fences, no prose outside it:
+{"status":"review","topLine":"one short honest sentence verdict on the week","cutDown":["..."],"eatMore":["..."],"swaps":["..."]}
+
+- topLine: one sentence summarizing the week, in plain terms.
+- cutDown (0-3 items): specific foods or habits that are the actual repeat offenders in the log — name them (e.g. "the 9pm chips, 4 nights this week"), not vague categories like "snacking". Omit entirely (empty array) if nothing stands out.
+- eatMore (0-2 items): specific, concrete gaps — what they're actually short on and why it matters for their goal (e.g. protein only hit on days they ate eggs). Omit if nothing stands out.
+- swaps (0-2 items): a specific food-for-food substitution that keeps what they clearly like (crunchy, sweet, filling, etc.) but costs less — never generic advice like "eat a salad instead". Omit if nothing obvious.
+
+Days marked as a planned cheat day are expected to run high on purpose — never flag those as a problem. Only call out real, unplanned patterns, and only ones actually visible in the logged foods below. If the week was genuinely solid, say so plainly in topLine and leave the arrays empty — do not invent nitpicks just to fill them. Keep every string to one sentence, specific, and grounded in the actual food names given.`;
+
 function corsHeaders(origin) {
   const headers = {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -64,6 +79,85 @@ function json(obj, status, origin) {
     status,
     headers: { 'Content-Type': 'application/json', ...corsHeaders(origin) },
   });
+}
+
+async function handleWeeklyReview(body, env, origin) {
+  const week = body.week;
+  if (!week || !Array.isArray(week.days)) return json({ error: 'bad_request' }, 400, origin);
+
+  const lines = [];
+  lines.push(`Week: ${String(week.startDate || '').slice(0, 20)} to ${String(week.endDate || '').slice(0, 20)}`);
+  lines.push(`Protein floor: ${week.proteinMinG || '?'}g/day${week.fatMaxG ? `, fat limit: ${week.fatMaxG}g/day` : ''}`);
+  if (week.weightChangeKg != null) {
+    lines.push(`Weight change: ${week.weightChangeKg}kg (pace target: -${week.weeklyPaceTargetKg}kg/week)`);
+  }
+  if (Array.isArray(week.missedDays) && week.missedDays.length) {
+    lines.push(`Not logged at all: ${week.missedDays.slice(0, 7).map(d => String(d).slice(0, 40)).join(', ')}`);
+  }
+  if (Array.isArray(week.deterministicNotes) && week.deterministicNotes.length) {
+    lines.push('');
+    lines.push('Already-computed facts (trust these, do not recompute):');
+    week.deterministicNotes.slice(0, 10).forEach(n => lines.push(`- ${String(n).slice(0, 300)}`));
+  }
+  lines.push('');
+  lines.push('Day-by-day log:');
+  week.days.slice(0, 7).forEach(d => {
+    const foods = Array.isArray(d.foods) ? d.foods.slice(0, 25) : [];
+    if (!foods.length) return;
+    lines.push(`${String(d.weekday || '').slice(0, 10)} ${String(d.date || '').slice(0, 20)}${d.isCheatDay ? ' (planned cheat day)' : ''}: ${d.loggedKcal}kcal (target ${d.targetKcal}${d.over > 0 ? `, +${d.over} over` : ''}), protein ${d.protein}g, fat ${d.fat}g`);
+    foods.forEach(f => lines.push(`  - ${String(f.meal || '').slice(0, 20)}: ${String(f.name || '').slice(0, 100)} (${Number(f.kcal) || 0} kcal)`));
+  });
+
+  const userMsg = lines.join('\n').slice(0, 8000);
+
+  let geminiRes;
+  try {
+    geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: REVIEW_SYSTEM_PROMPT }] },
+          contents: [{ role: 'user', parts: [{ text: userMsg }] }],
+          generationConfig: { maxOutputTokens: REVIEW_MAX_TOKENS, responseMimeType: 'application/json' },
+        }),
+        signal: AbortSignal.timeout(20000),
+      }
+    );
+  } catch (e) {
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+      return json({ error: 'upstream_timeout' }, 504, origin);
+    }
+    return json({ error: 'upstream_unreachable' }, 502, origin);
+  }
+
+  if (!geminiRes.ok) {
+    const status = geminiRes.status === 429 ? 429 : 502;
+    return json({ error: 'upstream_error', status: geminiRes.status }, status, origin);
+  }
+
+  const data = await geminiRes.json();
+  const text = ((data.candidates || [])[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+
+  let parsed;
+  try {
+    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    return json({ error: 'unparseable_response' }, 502, origin);
+  }
+
+  const clampList = (arr, max) =>
+    Array.isArray(arr) ? arr.slice(0, max).map(x => String(x).slice(0, 300)).filter(Boolean) : [];
+
+  return json({
+    status: 'review',
+    topLine: String(parsed.topLine || '').slice(0, 300),
+    cutDown: clampList(parsed.cutDown, 3),
+    eatMore: clampList(parsed.eatMore, 2),
+    swaps: clampList(parsed.swaps, 2),
+  }, 200, origin);
 }
 
 export default {
@@ -91,6 +185,10 @@ export default {
       body = await request.json();
     } catch (e) {
       return json({ error: 'bad_request' }, 400, origin);
+    }
+
+    if (body.type === 'weekly_review') {
+      return handleWeeklyReview(body, env, origin);
     }
 
     const description = String(body.description || '').trim().slice(0, 300);

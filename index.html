@@ -277,6 +277,7 @@ function defaultSettings(){
     cheatSundayAnchor: mostRecentSunday(todayStr()), // this anchor Sunday IS a cheat sunday; alternates from there
     lastExportAt: null,
     aiEstimate: { workerUrl: null, appSecret: null }, // your own Cloudflare Worker — see Plan tab
+    weeklyInsightCache: null, // {weekStart, topLine, cutDown, eatMore, swaps} — cached AI weekly review, one call per week
   };
 }
 
@@ -577,7 +578,7 @@ function weekTotals(dateStr){
    ========================================================================= */
 const APP_VERSION = '2026-11-19';
 const CHANGELOG = [
-  { v: '2026-11-19', notes: 'Fixed the Sunday cheat-day toggle — it was saving but nothing actually read it, so it did nothing. Added a "last week" review card on Trends: what went over, protein/fat misses, missed logging days, weight change.' },
+  { v: '2026-11-19', notes: 'Fixed the Sunday cheat-day toggle — it was saving but nothing actually read it, so it did nothing. Added a "last week" review card on Trends: what went over, protein/fat misses, missed logging days, weight change — plus an optional "Get AI insights" button that looks at what you actually ate and calls out specific foods to cut down on, what to eat more of, and concrete swaps. AI estimate accuracy: branded products now use a live search lookup for the real label instead of guessing from memory.' },
   { v: '2026-11-13', notes: 'Added a quantity stepper when logging — ×3 roti is one tap-through now, not three. AI estimate also asks instead of guessing when you give a price-based pack size (e.g. "20rs packet"), since that guess was unreliable.' },
   { v: '2026-11-10', notes: 'AI estimate: carries over text already typed (search bar / craving field) and skips the redundant retype box; added a "Check again" button so editing name/serving actually re-asks the AI; eggs now default to medium not large.' },
   { v: '2026-11-08.1', notes: 'Fat limit now scales up on cheat days along with your calorie budget, instead of a flat cap that made no sense on those days.' },
@@ -1042,6 +1043,8 @@ function wireTodayActions(){
     if(action==='aiestimatecheck'){ aiEstimateCheckCraving(); }
     if(action==='aiestimaterecalc'){ aiEstimateRecalc(); }
     if(action==='gotoplanaisetup'){ closeSheet(); document.querySelector('[data-tab=plan]').click(); }
+    if(action==='getweeklyinsight'){ runWeeklyInsight(); }
+    if(action==='refreshweeklyinsight'){ runWeeklyInsight(); }
     if(action==='exportbackup'){ exportBackup(); }
     if(action==='dismissbackup'){ backupNudgeDismissed=true; renderAll(); }
     if(action==='importbackup'){ triggerImport(); }
@@ -1882,6 +1885,104 @@ function computeWeeklyReview(){
   return { reviewMon, reviewEnd: days[6], days, loggedDays, missedDays, kcalOverDays, worstOverDay, worstOverAmt, proteinHitDays, fatEnabled, fatOverDays, weightChange, notes };
 }
 
+function buildWeeklyReviewPayload(r){
+  const s = state.settings;
+  const plan = computeWeeklyPlan();
+  const days = r.days.map(d=>{
+    const logs = state.logsByDate[d]||[];
+    const t = totalsFor(d);
+    const target = dayTargetFor(d);
+    const wd = weekdayOf(d);
+    const isCheatDay = (wd===0 && effectiveCheatSunday(d, s))
+      || (wd===2 && s.plan.tuesdayShawarmaCount>=2)
+      || (wd===6 && s.plan.saturdayShawarmaCount>=2);
+    return {
+      date: d,
+      weekday: WD_NAMES[wd],
+      isCheatDay,
+      targetKcal: Math.round(target),
+      loggedKcal: Math.round(t.kcal),
+      over: Math.round(t.kcal-target),
+      protein: Math.round(t.protein),
+      fat: Math.round(t.fat),
+      foods: logs.map(l=>({name:l.name, kcal:Math.round(l.kcal), meal:l.meal||''})),
+    };
+  });
+  return {
+    startDate: r.reviewMon,
+    endDate: r.reviewEnd,
+    days,
+    missedDays: r.missedDays.map(d=>`${WD_NAMES[weekdayOf(d)]} ${fmtDateShort(d)}`),
+    proteinMinG: s.proteinMinG,
+    fatMaxG: s.fatMaxG,
+    weightChangeKg: r.weightChange!=null ? Number(r.weightChange.toFixed(1)) : null,
+    weeklyPaceTargetKg: Number(plan.weeklyLossKg.toFixed(2)),
+    deterministicNotes: r.notes,
+  };
+}
+
+async function fetchAiWeeklyInsight(r){
+  const cfg = state.settings.aiEstimate;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(()=>controller.abort(), 25000);
+  let res;
+  try{
+    res = await fetch(cfg.workerUrl, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'X-App-Secret': cfg.appSecret},
+      body: JSON.stringify({ type:'weekly_review', week: buildWeeklyReviewPayload(r) }),
+      signal: controller.signal,
+    });
+  }catch(e){
+    clearTimeout(timeoutId);
+    if(e.name==='AbortError') throw new Error('That took too long — try again in a bit.');
+    throw new Error("Couldn't reach your Worker — check the Worker URL in Plan → AI estimate setup and your connection.");
+  }
+  clearTimeout(timeoutId);
+  let data;
+  try{ data = await res.json(); }catch(e){ data = null; }
+  if(!res.ok || !data || data.error){
+    if(res.status===401) throw new Error("The app secret doesn't match what's set on your Worker.");
+    if(res.status===429) throw new Error('Rate limited right now — try again in a minute.');
+    throw new Error("Couldn't get insights this time. Try again.");
+  }
+  return data;
+}
+
+async function runWeeklyInsight(){
+  const r = computeWeeklyReview();
+  const statusEl = document.getElementById('weeklyInsightStatus');
+  if(statusEl) statusEl.textContent = 'Thinking…';
+  try{
+    const data = await fetchAiWeeklyInsight(r);
+    state.settings.weeklyInsightCache = {
+      weekStart: r.reviewMon,
+      topLine: data.topLine||'',
+      cutDown: data.cutDown||[],
+      eatMore: data.eatMore||[],
+      swaps: data.swaps||[],
+    };
+    saveSettings();
+    renderAll();
+  }catch(e){
+    if(statusEl) statusEl.textContent = e.message;
+  }
+}
+
+function renderWeeklyInsights(ins){
+  const section=(title, items)=> (items && items.length) ? `
+    <div style="margin-top:10px;">
+      <div class="label" style="margin-bottom:4px;">${title}</div>
+      <ul style="margin:0; padding-left:18px;">${items.map(i=>`<li class="sub" style="margin-bottom:4px;">${esc(i)}</li>`).join('')}</ul>
+    </div>` : '';
+  return `
+    ${ins.topLine ? `<p class="sub" style="margin:10px 0 0; font-weight:700;">${esc(ins.topLine)}</p>` : ''}
+    ${section('Cut down on', ins.cutDown)}
+    ${section('Eat more of', ins.eatMore)}
+    ${section('Try swapping', ins.swaps)}
+  `;
+}
+
 function renderWeeklyReviewCard(){
   const r = computeWeeklyReview();
   if(r.loggedDays===0){
@@ -1891,12 +1992,21 @@ function renderWeeklyReviewCard(){
       <p class="sub">Nothing logged that week — no review to show.</p>
     </div>`;
   }
+  const cfg = state.settings.aiEstimate;
+  const hasAi = !!(cfg.workerUrl && cfg.appSecret);
+  const cache = state.settings.weeklyInsightCache;
+  const cached = (cache && cache.weekStart===r.reviewMon) ? cache : null;
   return `
     <div class="card">
       <div class="label" style="margin-bottom:10px;">Last week (${fmtDateShort(r.reviewMon)}–${fmtDateShort(r.reviewEnd)})</div>
       <ul style="margin:0; padding-left:18px;">
         ${r.notes.map(n=>`<li class="sub" style="margin-bottom:6px;">${esc(n)}</li>`).join('')}
       </ul>
+      ${cached ? renderWeeklyInsights(cached) : ''}
+      ${hasAi
+        ? `<button class="btn ${cached?'btn-ghost':''} btn-block" style="margin-top:12px;" data-action="${cached?'refreshweeklyinsight':'getweeklyinsight'}">${cached?'↻ Re-check with AI':'✨ Get AI insights'}</button>`
+        : `<p class="sub" style="margin-top:10px;">Set up the AI estimate worker in Plan → AI estimate setup to get personalized advice here — what to cut down on, what to eat more of, what to swap.</p>`}
+      <div id="weeklyInsightStatus" class="sub" style="margin-top:8px;"></div>
     </div>`;
 }
 
