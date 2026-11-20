@@ -134,7 +134,8 @@ async function handleWeeklyReview(body, env, origin) {
 
   if (!geminiRes.ok) {
     const status = geminiRes.status === 429 ? 429 : 502;
-    return json({ error: 'upstream_error', status: geminiRes.status }, status, origin);
+    const debugText = await geminiRes.text().catch(() => '');
+    return json({ error: 'upstream_error', status: geminiRes.status, debug: debugText.slice(0, 500) }, status, origin);
   }
 
   const data = await geminiRes.json();
@@ -230,7 +231,8 @@ export default {
 
     if (!geminiRes.ok) {
       const status = geminiRes.status === 429 ? 429 : 502;
-      return json({ error: 'upstream_error', status: geminiRes.status }, status, origin);
+      const debugText = await geminiRes.text().catch(() => '');
+      return json({ error: 'upstream_error', status: geminiRes.status, debug: debugText.slice(0, 500) }, status, origin);
     }
 
     const data = await geminiRes.json();
