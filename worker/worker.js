@@ -134,8 +134,7 @@ async function handleWeeklyReview(body, env, origin) {
 
   if (!geminiRes.ok) {
     const status = geminiRes.status === 429 ? 429 : 502;
-    const debugText = await geminiRes.text().catch(() => '');
-    return json({ error: 'upstream_error', status: geminiRes.status, debug: debugText.slice(0, 2000) }, status, origin);
+    return json({ error: 'upstream_error', status: geminiRes.status }, status, origin);
   }
 
   const data = await geminiRes.json();
@@ -206,12 +205,10 @@ export default {
       userMsg += '\n\n(You already asked a question above — you must return an estimate now, not another question.)';
     }
 
-    const debugModel = /^[a-zA-Z0-9.-]{1,60}$/.test(body.debugModel || '') ? body.debugModel : MODEL;
-
     let geminiRes;
     try {
       geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${debugModel}:generateContent?key=${env.GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -233,8 +230,7 @@ export default {
 
     if (!geminiRes.ok) {
       const status = geminiRes.status === 429 ? 429 : 502;
-      const debugText = await geminiRes.text().catch(() => '');
-      return json({ error: 'upstream_error', status: geminiRes.status, model: debugModel, debug: debugText.slice(0, 2000) }, status, origin);
+      return json({ error: 'upstream_error', status: geminiRes.status }, status, origin);
     }
 
     const data = await geminiRes.json();
