@@ -82,6 +82,26 @@ function json(obj, status, origin) {
   });
 }
 
+// gpt-oss-120b occasionally emits a tool call to a nonexistent "json" function
+// instead of plain content when a real tool (browser_search) is in scope. Groq
+// rejects that as tool_use_failed, but the model's intended JSON answer is
+// still present in error.failed_generation — recover it from there if so.
+function recoverHallucinatedJsonTool(bodyText) {
+  try {
+    const errBody = JSON.parse(bodyText);
+    if (errBody?.error?.code !== 'tool_use_failed') return null;
+    const fg = typeof errBody.error.failed_generation === 'string'
+      ? JSON.parse(errBody.error.failed_generation)
+      : errBody.error.failed_generation;
+    if (fg && typeof fg === 'object' && fg.arguments && typeof fg.arguments === 'object') {
+      return fg.arguments;
+    }
+  } catch (e) {
+    // not this shape — let the caller fall back to a normal error
+  }
+  return null;
+}
+
 async function handleWeeklyReview(body, env, origin) {
   const week = body.week;
   if (!week || !Array.isArray(week.days)) return json({ error: 'bad_request' }, 400, origin);
@@ -238,22 +258,27 @@ export default {
       return json({ error: 'upstream_unreachable' }, 502, origin);
     }
 
-    if (!groqRes.ok) {
-      const status = groqRes.status === 429 ? 429 : 502;
-      const debugText = await groqRes.text().catch(() => '');
-      return json({ error: 'upstream_error', status: groqRes.status, debug: debugText.slice(0, 1500) }, status, origin);
-    }
-
-    const data = await groqRes.json();
-    const text = String(data.choices?.[0]?.message?.content || '').trim();
-
     let parsed;
-    try {
-      // model sometimes wraps in fences despite instructions — strip them defensively
-      const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-      parsed = JSON.parse(cleaned);
-    } catch (e) {
-      return json({ error: 'unparseable_response' }, 502, origin);
+    if (!groqRes.ok) {
+      // gpt-oss-120b sometimes hallucinates a tool call to a fake "json" function
+      // instead of returning plain JSON content when browser_search is available —
+      // the real answer is still right there in the rejected tool call's arguments.
+      const bodyText = await groqRes.text().catch(() => '');
+      parsed = recoverHallucinatedJsonTool(bodyText);
+      if (!parsed) {
+        const status = groqRes.status === 429 ? 429 : 502;
+        return json({ error: 'upstream_error', status: groqRes.status }, status, origin);
+      }
+    } else {
+      const data = await groqRes.json();
+      const text = String(data.choices?.[0]?.message?.content || '').trim();
+      try {
+        // model sometimes wraps in fences despite instructions — strip them defensively
+        const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+        parsed = JSON.parse(cleaned);
+      } catch (e) {
+        return json({ error: 'unparseable_response' }, 502, origin);
+      }
     }
 
     if (parsed.status === 'question' && answers.length === 0 && typeof parsed.question === 'string') {
