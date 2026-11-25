@@ -2,30 +2,31 @@
  * diced — AI food estimate proxy
  *
  * Runs on Cloudflare Workers (free tier). Its only job is to hold the
- * Gemini API key server-side so it never appears in the public diced
+ * Groq API key server-side so it never appears in the public diced
  * repo/app, and to turn "orange" (or "orange, answers: [...]") into a
  * strict-JSON calorie/macro estimate, asking at most one clarifying
  * question when the portion is genuinely ambiguous.
  *
- * Fully free to run: Cloudflare Workers' free tier plus Google AI Studio's
- * free Gemini API tier (no credit card, no billing) comfortably cover
- * personal use — see worker/README.md.
+ * Fully free to run: Cloudflare Workers' free tier plus Groq's free API
+ * tier (no credit card, no billing) comfortably cover personal use —
+ * see worker/README.md.
  *
  * Deploy: paste this whole file into a new Worker in the Cloudflare
  * dashboard (Workers & Pages -> Create -> paste -> Deploy). Then set two
  * encrypted variables under that Worker's Settings -> Variables:
- *   GEMINI_API_KEY  - your free key from aistudio.google.com
- *   APP_SECRET      - any random string you make up (also goes into
- *                     the diced app's settings so random internet
- *                     traffic can't use your key)
+ *   GROQ_API_KEY  - your free key from console.groq.com/keys
+ *   APP_SECRET    - any random string you make up (also goes into
+ *                   the diced app's settings so random internet
+ *                   traffic can't use your key)
  * Nothing else to configure — CORS is locked to the diced GitHub Pages
  * origin below.
  */
 
 const ALLOWED_ORIGIN = 'https://viz248.github.io';
-const MODEL = 'gemini-3.5-flash-lite';
-const MAX_TOKENS = 800;
-const REVIEW_MAX_TOKENS = 700;
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = 'openai/gpt-oss-120b';
+const MAX_TOKENS = 1200;
+const REVIEW_MAX_TOKENS = 1100;
 
 const SYSTEM_PROMPT = `You estimate calories and macros for a food a user is about to log in a personal diet-tracking app. You are not a doctor and this is not medical advice — you are giving a practical, reasonable estimate for someone tracking their own food.
 
@@ -110,21 +111,25 @@ async function handleWeeklyReview(body, env, origin) {
 
   const userMsg = lines.join('\n').slice(0, 8000);
 
-  let geminiRes;
+  let groqRes;
   try {
-    geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: REVIEW_SYSTEM_PROMPT }] },
-          contents: [{ role: 'user', parts: [{ text: userMsg }] }],
-          generationConfig: { maxOutputTokens: REVIEW_MAX_TOKENS, responseMimeType: 'application/json' },
-        }),
-        signal: AbortSignal.timeout(20000),
-      }
-    );
+    groqRes = await fetch(GROQ_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${env.GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: [
+          { role: 'system', content: REVIEW_SYSTEM_PROMPT },
+          { role: 'user', content: userMsg },
+        ],
+        max_completion_tokens: REVIEW_MAX_TOKENS,
+        reasoning_effort: 'low',
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
   } catch (e) {
     if (e.name === 'TimeoutError' || e.name === 'AbortError') {
       return json({ error: 'upstream_timeout' }, 504, origin);
@@ -132,13 +137,13 @@ async function handleWeeklyReview(body, env, origin) {
     return json({ error: 'upstream_unreachable' }, 502, origin);
   }
 
-  if (!geminiRes.ok) {
-    const status = geminiRes.status === 429 ? 429 : 502;
-    return json({ error: 'upstream_error', status: geminiRes.status }, status, origin);
+  if (!groqRes.ok) {
+    const status = groqRes.status === 429 ? 429 : 502;
+    return json({ error: 'upstream_error', status: groqRes.status }, status, origin);
   }
 
-  const data = await geminiRes.json();
-  const text = ((data.candidates || [])[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+  const data = await groqRes.json();
+  const text = String(data.choices?.[0]?.message?.content || '').trim();
 
   let parsed;
   try {
@@ -176,7 +181,7 @@ export default {
     if (!env.APP_SECRET || request.headers.get('X-App-Secret') !== env.APP_SECRET) {
       return json({ error: 'unauthorized' }, 401, origin);
     }
-    if (!env.GEMINI_API_KEY) {
+    if (!env.GROQ_API_KEY) {
       return json({ error: 'server_not_configured' }, 500, origin);
     }
 
@@ -205,22 +210,27 @@ export default {
       userMsg += '\n\n(You already asked a question above — you must return an estimate now, not another question.)';
     }
 
-    let geminiRes;
+    let groqRes;
     try {
-      geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-            contents: [{ role: 'user', parts: [{ text: userMsg }] }],
-            tools: [{ google_search: {} }],
-            generationConfig: { maxOutputTokens: MAX_TOKENS },
-          }),
-          signal: AbortSignal.timeout(15000),
-        }
-      );
+      groqRes = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userMsg },
+          ],
+          max_completion_tokens: MAX_TOKENS,
+          reasoning_effort: 'low',
+          tools: [{ type: 'browser_search' }],
+          tool_choice: 'auto',
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
     } catch (e) {
       if (e.name === 'TimeoutError' || e.name === 'AbortError') {
         return json({ error: 'upstream_timeout' }, 504, origin);
@@ -228,13 +238,13 @@ export default {
       return json({ error: 'upstream_unreachable' }, 502, origin);
     }
 
-    if (!geminiRes.ok) {
-      const status = geminiRes.status === 429 ? 429 : 502;
-      return json({ error: 'upstream_error', status: geminiRes.status }, status, origin);
+    if (!groqRes.ok) {
+      const status = groqRes.status === 429 ? 429 : 502;
+      return json({ error: 'upstream_error', status: groqRes.status }, status, origin);
     }
 
-    const data = await geminiRes.json();
-    const text = ((data.candidates || [])[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+    const data = await groqRes.json();
+    const text = String(data.choices?.[0]?.message?.content || '').trim();
 
     let parsed;
     try {
