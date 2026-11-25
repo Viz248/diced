@@ -240,7 +240,8 @@ export default {
 
     if (!groqRes.ok) {
       const status = groqRes.status === 429 ? 429 : 502;
-      return json({ error: 'upstream_error', status: groqRes.status }, status, origin);
+      const debugText = await groqRes.text().catch(() => '');
+      return json({ error: 'upstream_error', status: groqRes.status, debug: debugText.slice(0, 1500) }, status, origin);
     }
 
     const data = await groqRes.json();
