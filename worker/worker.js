@@ -25,7 +25,7 @@
 const ALLOWED_ORIGIN = 'https://viz248.github.io';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = 'openai/gpt-oss-120b';
-const MAX_TOKENS = 1200;
+const MAX_TOKENS = 1800;
 const REVIEW_MAX_TOKENS = 1100;
 
 const SYSTEM_PROMPT = `You estimate calories and macros for a food a user is about to log in a personal diet-tracking app. You are not a doctor and this is not medical advice — you are giving a practical, reasonable estimate for someone tracking their own food.
@@ -39,6 +39,8 @@ Respond with ONLY a single JSON object, no markdown fences, no prose before or a
 {"status":"estimate","name":"Orange","kcal":62,"protein":1,"carbs":15,"fat":0,"servingLabel":"1 medium (~130g)"}
 
 Fields for the estimate shape: name (short, cleaned-up food name), kcal (integer), protein/carbs/fat (grams, integers, reasonable macro split that roughly accounts for the calories), servingLabel (what portion this estimate assumes, short).
+
+Before finalizing numbers, sanity-check them against each other: protein grams × 4 + carbs grams × 4 + fat grams × 9 should land within about 10% of your stated kcal (alcohol aside). If your first pass doesn't, it means one of the numbers is off — adjust the macros (not just the calories) until they're internally consistent, the same way a real nutrition label would be.
 
 You get at most one question total across the whole exchange — if you already asked one and got an answer (or the user's answers list is non-empty), you MUST return an estimate this time, doing your best with whatever you now know.
 
@@ -245,7 +247,7 @@ export default {
             { role: 'user', content: userMsg },
           ],
           max_completion_tokens: MAX_TOKENS,
-          reasoning_effort: 'low',
+          reasoning_effort: 'medium',
           tools: [{ type: 'browser_search' }],
           tool_choice: 'auto',
         }),
